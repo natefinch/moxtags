@@ -13,8 +13,8 @@ card context menus on [Moxfield](https://moxfield.com).
 2. When you click the dropdown arrow (▼) next to a card in the deck list,
    the extension detects the context menu and identifies which card you
    clicked on.
-3. It fetches the tags for that exact printing from
-   `https://tagger.scryfall.com/card/{set}/{number}`.
+3. It looks up the tags for that card from the locally cached Scryfall tag
+   data (see [Tag Data Cache](#tag-data-cache) below).
 4. Two new sections — **Art Tags** and **Card Tags** — are appended to the
    bottom of the context menu.
 5. Each tag is a clickable link that searches within the current deck using
@@ -36,12 +36,53 @@ card context menus on [Moxfield](https://moxfield.com).
 
 ## Files
 
-| File            | Purpose                                                    |
-| --------------- | ---------------------------------------------------------- |
-| `manifest.json` | Chrome Extension manifest (Manifest V3)                    |
-| `background.js` | Service worker — proxies cross-origin fetch requests       |
-| `content.js`    | Content script — deck data loading, menu detection, UI     |
-| `styles.css`    | Styles for the injected tag sections                       |
+| File            | Purpose                                                         |
+| --------------- | --------------------------------------------------------------- |
+| `manifest.json` | Chrome Extension manifest (Manifest V3)                         |
+| `background.js` | Service worker — tag data caching, batch prefetch, proxy fetch  |
+| `content.js`    | Content script — deck data loading, menu detection, UI          |
+| `styles.css`    | Styles for the injected tag sections                            |
+| `popup.html`    | Toolbar popup — tag cache status UI                             |
+| `popup.js`      | Toolbar popup logic — queries background for cache status       |
+
+## Tag Data Cache
+
+MoxTags downloads the full Scryfall tag dataset (oracle tags and illustration
+tags) and stores it locally using Chrome's `storage.local` API. This means tag
+lookups are fast — no network request is needed when you open a card's context
+menu.
+
+- **Initial download** happens automatically the first time you use the
+  extension (or if you clear extension storage). The two tag files are ~5 MB
+  combined.
+- **Daily refresh** — an alarm fires roughly every 24 hours (with a random
+  jitter of up to 60 minutes) to re-download the tag data so it stays
+  current.
+- **Per-deck prefetch** — when you open a deck page, the extension
+  batch-fetches each card's `oracle_id` and `illustration_id` from
+  Scryfall's `/cards/collection` endpoint (up to 75 cards per request).
+  Tags for every card in the deck are resolved against the cached indexes
+  and stored in memory, so opening a card's menu is instant.
+
+### Toolbar Button
+
+Click the **MoxTags** icon in the Chrome toolbar to see a status popup:
+
+| Indicator | Meaning |
+|---|---|
+| 🟢 Green dot | Tag cache is ready — shows how long ago it was downloaded |
+| 🟡 Pulsing yellow dot | Tag data is currently being downloaded |
+| ⚪ Grey dot | No tag data has been cached yet |
+| 🔴 Red dot | Unable to reach the background worker / last refresh failed |
+
+The popup also shows:
+- **Last downloaded** — relative time (e.g. "3h 12m ago") and absolute
+  timestamp of the most recent successful cache refresh.
+- **Oracle IDs indexed** / **Illustration IDs indexed** — the number of
+  unique IDs in each reverse index, so you can confirm the data loaded
+  correctly.
+- **Refresh tag data now** button — triggers an immediate re-download of the
+  tag data without waiting for the next scheduled alarm.
 
 ## Notes
 
@@ -49,10 +90,6 @@ card context menus on [Moxfield](https://moxfield.com).
   authentication cookies that the background service worker does not
   currently forward — this may be added in a future version.
 - Art tag search links use the `art:` prefix and card tag links use `otag:`.
-  If Moxfield does not support `art:` in its deck search, those links may
-  not filter correctly.
-- Tag results are cached in memory for the session so re-opening a card's
-  menu does not re-fetch from Scryfall Tagger.
 
 ## License
 
