@@ -300,30 +300,24 @@
     }
   }
 
-  // ─── Scryfall Tagger fetching & parsing ────────────────────────────
+  // ─── Scryfall Tagger fetching (GraphQL) ─────────────────────────────
   async function loadTags(set, cn) {
-    const url = `https://tagger.scryfall.com/card/${encodeURIComponent(set)}/${encodeURIComponent(cn)}`;
-    const html = await bgFetch(url);
-    return parseTaggerPage(html);
-  }
-
-  function parseTaggerPage(html) {
-    const doc = new DOMParser().parseFromString(html, 'text/html');
-
-    const artTags = [];
-    const cardTags = [];
-
-    for (const a of doc.querySelectorAll('a[href*="/tags/artwork/"]')) {
-      const slug = (a.getAttribute('href') || '').split('/tags/artwork/').pop();
-      if (slug) artTags.push({ name: a.textContent.trim(), slug });
-    }
-
-    for (const a of doc.querySelectorAll('a[href*="/tags/card/"]')) {
-      const slug = (a.getAttribute('href') || '').split('/tags/card/').pop();
-      if (slug) cardTags.push({ name: a.textContent.trim(), slug });
-    }
-
-    return { artTags, cardTags };
+    return new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage(
+        { type: 'fetchTags', set, number: cn },
+        (resp) => {
+          if (chrome.runtime.lastError) {
+            return reject(new Error(chrome.runtime.lastError.message));
+          }
+          if (resp?.ok) {
+            log(`Tags loaded: ${resp.artTags.length} art, ${resp.cardTags.length} card`);
+            resolve({ artTags: resp.artTags, cardTags: resp.cardTags });
+          } else {
+            reject(new Error(resp?.error || 'Tag fetch failed'));
+          }
+        }
+      );
+    });
   }
 
   // ─── Rendering ─────────────────────────────────────────────────────

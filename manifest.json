@@ -4,7 +4,9 @@
   "version": "1.0.0",
   "description": "Adds Scryfall Tagger art and card tags to Moxfield deck card menus",
   "permissions": [
-    "storage"
+    "storage",
+    "cookies",
+    "declarativeNetRequest"
   ],
   "host_permissions": [
     "https://moxfield.com/*",
