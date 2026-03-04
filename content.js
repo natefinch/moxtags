@@ -67,7 +67,10 @@
       try {
         const text = await bgFetch(base);
         const data = JSON.parse(text);
-        if (buildCardMap(data)) return;
+        if (buildCardMap(data)) {
+          prefetchAllTags();
+          return;
+        }
       } catch (_) {
         // Try next endpoint.
       }
@@ -113,6 +116,34 @@
 
     log('Card lookup ready –', cardMap.size, 'entries');
     return cardMap.size > 0;
+  }
+
+  // ─── Prefetch tags for entire deck ─────────────────────────────────
+  function prefetchAllTags() {
+    // Collect unique set/cn pairs.
+    const seen = new Set();
+    const cards = [];
+    for (const info of cardMap.values()) {
+      const key = `${info.set}/${info.cn}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      cards.push({ set: info.set, cn: info.cn });
+    }
+    log('Prefetching tags for', cards.length, 'unique cards…');
+    chrome.runtime.sendMessage({ type: 'prefetchDeck', cards }, (resp) => {
+      if (chrome.runtime.lastError) {
+        warn('Prefetch failed:', chrome.runtime.lastError.message);
+        return;
+      }
+      if (resp?.ok && resp.tags) {
+        for (const [key, tags] of Object.entries(resp.tags)) {
+          tagCache.set(key, tags);
+        }
+        log('Prefetch complete –', tagCache.size, 'cards cached');
+      } else {
+        warn('Prefetch failed:', resp?.error);
+      }
+    });
   }
 
   // ─── Click tracking ────────────────────────────────────────────────
@@ -168,6 +199,8 @@
   }
 
   function scanForMenu(el) {
+    // No point scanning for menus if no card has been clicked yet.
+    if (!currentCard) return;
     // Direct check on el and all descendants.
     const candidates = [el, ...el.querySelectorAll('*')];
     for (const c of candidates) {
@@ -205,10 +238,7 @@
     if (!el || el === document.body || el === document.documentElement) return false;
     // Skip our own injected elements.
     if (el.closest?.('.moxtags-injected') || el.closest?.('.moxtags-submenu')) return false;
-    // Exclude text from our injected elements when checking.
-    const clone = el.cloneNode(true);
-    clone.querySelectorAll('.moxtags-injected').forEach(n => n.remove());
-    const text = clone.textContent || '';
+    const text = el.textContent || '';
     if (text.length < 20 || text.length > 8000) return false;
     let hits = 0;
     for (const kw of MENU_KEYWORDS) {
@@ -228,6 +258,7 @@
   }, true);
 
   function pollForMenu() {
+    if (!currentCard) return;
     // Search for a card menu. Start from portals / overlays
     // which are typically direct children of body or within a high-level wrapper.
     const roots = document.querySelectorAll(
@@ -353,7 +384,7 @@
     return null;
   }
 
-  // ─── Scryfall Tagger fetching (GraphQL) ─────────────────────────────
+  // ─── Tag fetching ────────────────────────────────────────────────────
   async function loadTags(set, cn) {
     return new Promise((resolve, reject) => {
       chrome.runtime.sendMessage(
