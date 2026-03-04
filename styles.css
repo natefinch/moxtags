@@ -1,15 +1,46 @@
-/* MoxTags – injected tag sections in Moxfield card context menus */
+/* MoxTags – side-panel for Scryfall Tagger tags next to Moxfield menus */
+
+/* ── Side panel (positioned next to the context menu) ─────────────── */
+.moxtags-panel {
+  position: fixed;
+  z-index: 100000;
+  background: #2b2b2b;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  overflow-y: auto;
+  min-width: 180px;
+  max-width: 360px;
+  color: rgba(255, 255, 255, 0.85);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 13px;
+}
+
+/* ── Two-column layout for art + card tag sections ────────────────── */
+.moxtags-columns {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+}
+
+.moxtags-columns > .moxtags-section {
+  flex: 1 1 0;
+  min-width: 140px;
+}
+
+/* Divider between columns */
+.moxtags-columns > .moxtags-section + .moxtags-section {
+  border-left: 1px solid rgba(255, 255, 255, 0.1);
+}
 
 /* ── Section container ─────────────────────────────────────────────── */
 .moxtags-section {
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
-  padding: 4px 0;
-  margin-top: 2px;
+  padding: 4px 0 6px;
 }
 
 /* ── Section header ("Art Tags", "Card Tags") ─────────────────────── */
 .moxtags-section-header {
-  padding: 6px 16px 4px;
+  padding: 6px 12px 4px;
   font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
@@ -23,7 +54,7 @@
 .moxtags-tag-list {
   display: flex;
   flex-direction: column;
-  max-height: 220px;
+  max-height: 300px;
   overflow-y: auto;
 }
 
@@ -42,7 +73,7 @@
 /* ── Individual tag link ──────────────────────────────────────────── */
 .moxtags-tag-item {
   display: block;
-  padding: 5px 16px;
+  padding: 4px 12px;
   font-size: 13px;
   line-height: 1.4;
   color: rgba(255, 255, 255, 0.85);
@@ -62,12 +93,10 @@
 
 /* ── Loading indicator ────────────────────────────────────────────── */
 .moxtags-loading {
-  padding: 8px 16px;
+  padding: 10px 12px;
   font-size: 12px;
   color: rgba(255, 255, 255, 0.4);
   font-style: italic;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
-  margin-top: 2px;
 }
 
 /* ── Error state ──────────────────────────────────────────────────── */
@@ -77,10 +106,8 @@
 
 /* ── "No tags found" message ─────────────────────────────────────── */
 .moxtags-empty {
-  padding: 8px 16px;
+  padding: 10px 12px;
   font-size: 12px;
   color: rgba(255, 255, 255, 0.3);
   font-style: italic;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
-  margin-top: 2px;
 }

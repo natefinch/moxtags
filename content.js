@@ -4,8 +4,8 @@
 (function () {
   'use strict';
 
-  // Attribute used to mark menus we have already processed.
-  const MARKER = 'data-moxtags';
+  // Tracks whether we are currently injecting, to debounce multiple detection paths.
+  let injecting = false;
 
   // ─── State ──────────────────────────────────────────────────────────
   let deckId = null;
@@ -171,9 +171,8 @@
     // Direct check on el and all descendants.
     const candidates = [el, ...el.querySelectorAll('*')];
     for (const c of candidates) {
-      if (isCardMenu(c) && !c.hasAttribute(MARKER)) {
+      if (isCardMenu(c)) {
         log('Menu detected via MutationObserver');
-        c.setAttribute(MARKER, '1');
         injectTagsIntoMenu(c);
         return;
       }
@@ -181,9 +180,8 @@
     // Walk up – the mutation may be inside a menu that already exists.
     let parent = el.parentElement;
     for (let i = 0; i < 10 && parent && parent !== document.body; i++) {
-      if (isCardMenu(parent) && !parent.hasAttribute(MARKER)) {
+      if (isCardMenu(parent)) {
         log('Menu detected via parent walk');
-        parent.setAttribute(MARKER, '1');
         injectTagsIntoMenu(parent);
         return;
       }
@@ -205,6 +203,8 @@
 
   function isCardMenu(el) {
     if (!el || el === document.body || el === document.documentElement) return false;
+    // Skip our own injected elements.
+    if (el.classList?.contains('moxtags-panel') || el.closest?.('.moxtags-panel')) return false;
     const text = el.textContent || '';
     if (text.length < 20 || text.length > 8000) return false;
     let hits = 0;
@@ -225,7 +225,7 @@
   }, true);
 
   function pollForMenu() {
-    // Search for an unprocessed card menu. Start from portals / overlays
+    // Search for a card menu. Start from portals / overlays
     // which are typically direct children of body or within a high-level wrapper.
     const roots = document.querySelectorAll(
       '[role="menu"], [role="listbox"], .dropdown-menu, .popover, ' +
@@ -234,20 +234,17 @@
       '[data-popper-placement], [class*="Popover"], [class*="popover"]'
     );
     for (const el of roots) {
-      if (isCardMenu(el) && !el.hasAttribute(MARKER)) {
+      if (isCardMenu(el)) {
         log('Menu detected via polling (targeted selectors)');
-        el.setAttribute(MARKER, '1');
         injectTagsIntoMenu(el);
         return;
       }
     }
     // Broader fallback: check direct children of body (React portals).
     for (const el of document.body.children) {
-      if (el.hasAttribute(MARKER)) continue;
       const found = findSmallestMenu(el);
-      if (found && !found.hasAttribute(MARKER)) {
+      if (found) {
         log('Menu detected via polling (body child walk)');
-        found.setAttribute(MARKER, '1');
         injectTagsIntoMenu(found);
         return;
       }
@@ -270,19 +267,47 @@
 
   // ─── Tag injection ─────────────────────────────────────────────────
   async function injectTagsIntoMenu(menu) {
+    // Debounce: multiple detection paths may fire simultaneously.
+    if (injecting) return;
+    injecting = true;
+
+    // Guard: remove any previous panel.
+    const existing = document.querySelector('.moxtags-panel');
+    if (existing) existing.remove();
+
     if (!currentCard) {
       warn('No card context when menu opened');
+      injecting = false;
       return;
     }
 
     const { name, set, cn } = currentCard;
     const cacheKey = `${set}/${cn}`;
 
-    // Show loading indicator.
+    // Create the side panel and position it next to the menu.
+    const panel = document.createElement('div');
+    panel.className = 'moxtags-panel';
+
     const loader = document.createElement('div');
     loader.className = 'moxtags-loading';
-    loader.textContent = `Loading tags for ${name}…`;
-    menu.appendChild(loader);
+    loader.textContent = `Loading tags…`;
+    panel.appendChild(loader);
+
+    // Insert the panel as a sibling right after the menu.
+    menu.parentElement.insertBefore(panel, menu.nextSibling);
+
+    // Position the panel to the right of the menu.
+    positionPanel(menu, panel);
+
+    // Also remove the panel when the menu disappears.
+    const cleanup = new MutationObserver(() => {
+      if (!document.body.contains(menu) || menu.offsetParent === null) {
+        panel.remove();
+        cleanup.disconnect();
+        injecting = false;
+      }
+    });
+    cleanup.observe(document.body, { childList: true, subtree: true, attributes: true });
 
     try {
       let tags = tagCache.get(cacheKey);
@@ -292,12 +317,32 @@
       }
 
       loader.remove();
-      renderTagSections(menu, tags);
+      renderTagSections(panel, tags);
+      positionPanel(menu, panel);
     } catch (err) {
       error('Tag fetch failed:', err);
       loader.textContent = 'Failed to load tags';
       loader.classList.add('moxtags-error');
     }
+  }
+
+  function positionPanel(menu, panel) {
+    const rect = menu.getBoundingClientRect();
+    panel.style.position = 'fixed';
+    panel.style.top = rect.top + 'px';
+    panel.style.left = (rect.right + 2) + 'px';
+    // If the panel would go off-screen to the right, put it on the left.
+    requestAnimationFrame(() => {
+      const panelRect = panel.getBoundingClientRect();
+      if (panelRect.right > window.innerWidth - 10) {
+        panel.style.left = (rect.left - panelRect.width - 2) + 'px';
+      }
+      // Clamp height so it doesn't go off bottom.
+      const maxH = window.innerHeight - rect.top - 10;
+      if (maxH > 100) {
+        panel.style.maxHeight = maxH + 'px';
+      }
+    });
   }
 
   // ─── Scryfall Tagger fetching (GraphQL) ─────────────────────────────
@@ -321,21 +366,26 @@
   }
 
   // ─── Rendering ─────────────────────────────────────────────────────
-  function renderTagSections(menu, tags) {
+  function renderTagSections(panel, tags) {
     if (tags.artTags.length === 0 && tags.cardTags.length === 0) {
       const empty = document.createElement('div');
       empty.className = 'moxtags-empty';
-      empty.textContent = 'No tags found on Scryfall Tagger';
-      menu.appendChild(empty);
+      empty.textContent = 'No tags found';
+      panel.appendChild(empty);
       return;
     }
 
+    const cols = document.createElement('div');
+    cols.className = 'moxtags-columns';
+
     if (tags.artTags.length > 0) {
-      menu.appendChild(buildSection('Art Tags', tags.artTags, 'art'));
+      cols.appendChild(buildSection('Art Tags', tags.artTags, 'art'));
     }
     if (tags.cardTags.length > 0) {
-      menu.appendChild(buildSection('Card Tags', tags.cardTags, 'otag'));
+      cols.appendChild(buildSection('Card Tags', tags.cardTags, 'otag'));
     }
+
+    panel.appendChild(cols);
   }
 
   function buildSection(title, tags, searchPrefix) {
