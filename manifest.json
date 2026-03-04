@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "MoxTags",
+  "version": "1.0.0",
+  "description": "Adds Scryfall Tagger art and card tags to Moxfield deck card menus",
+  "permissions": [
+    "storage"
+  ],
+  "host_permissions": [
+    "https://moxfield.com/*",
+    "https://www.moxfield.com/*",
+    "https://api2.moxfield.com/*",
+    "https://api.moxfield.com/*",
+    "https://tagger.scryfall.com/*",
+    "https://api.scryfall.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://moxfield.com/decks/*",
+        "https://www.moxfield.com/decks/*"
+      ],
+      "js": ["content.js"],
+      "css": ["styles.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "background": {
+    "service_worker": "background.js"
+  }
+}
