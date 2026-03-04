@@ -1,7 +1,9 @@
 # MoxTags
 
 A Chrome extension that adds **Scryfall Tagger** art tags and card tags to the
-card context menus on [Moxfield](https://moxfield.com) deck pages.
+card context menus on [Moxfield](https://moxfield.com)pages.
+
+<img width="381" height="956" alt="Image" src="https://github.com/user-attachments/assets/dc35e64d-3406-4a9a-8fcb-6df788fe1a56" />
 
 ## How It Works
 
