@@ -3,7 +3,7 @@
 A Chrome extension that adds **Scryfall Tagger** art tags and card tags to the
 card context menus on [Moxfield](https://moxfield.com).
 
-<img width="381" height="956" alt="Image" src="https://github.com/user-attachments/assets/dc35e64d-3406-4a9a-8fcb-6df788fe1a56" />
+<img width="531" height="828" alt="Image" src="https://github.com/user-attachments/assets/267dd949-2cee-46c2-97c3-132904beb610" />
 
 ## How It Works
 
@@ -20,6 +20,7 @@ card context menus on [Moxfield](https://moxfield.com).
 5. Each tag is a clickable link that searches within the current deck using
    the Moxfield search syntax (e.g. `otag:activated-ability` for card tags,
    `art:armor` for art tags).
+6. Or you can select the checkboxes next to multiple tags to search by all checked tags.
 
 ## Installation (Developer / Unpacked)
 

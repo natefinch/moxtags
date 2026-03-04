@@ -414,7 +414,50 @@
     const submenu = document.createElement('div');
     submenu.className = 'moxtags-submenu';
 
+    // "Search (N)" button – hidden until checkboxes are ticked.
+    const searchBtn = document.createElement('button');
+    searchBtn.className = 'moxtags-search-btn';
+    searchBtn.textContent = 'Search';
+    searchBtn.style.display = 'none';
+    submenu.appendChild(searchBtn);
+
+    // Track checked slugs for combined search.
+    const checked = new Set();
+
+    function updateSearchBtn() {
+      if (checked.size > 0) {
+        searchBtn.textContent = `Search (${checked.size})`;
+        searchBtn.style.display = '';
+      } else {
+        searchBtn.style.display = 'none';
+      }
+    }
+
+    searchBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const parts = [...checked].map(slug => `${searchPrefix}:${slug}`);
+      const q = parts.join(' ');
+      window.location.href = `${deckUrl}/search?q=${encodeURIComponent(q)}`;
+    });
+
     for (const tag of tags) {
+      const row = document.createElement('div');
+      row.className = 'moxtags-tag-row';
+
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.className = 'moxtags-tag-cb';
+      cb.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (cb.checked) {
+          checked.add(tag.slug);
+        } else {
+          checked.delete(tag.slug);
+        }
+        updateSearchBtn();
+      });
+      row.appendChild(cb);
+
       const a = document.createElement('a');
       a.className = 'moxtags-tag-item';
       a.textContent = tag.name;
@@ -423,7 +466,9 @@
         e.stopPropagation();
         window.location.href = a.href;
       });
-      submenu.appendChild(a);
+      row.appendChild(a);
+
+      submenu.appendChild(row);
     }
 
     trigger.appendChild(submenu);
