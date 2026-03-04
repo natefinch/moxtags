@@ -24,7 +24,7 @@ card context menus on [Moxfield](https://moxfield.com).
 
 ## Installation (Developer / Unpacked)
 
-1. Clone or download this repository (go to the green `Code` button in the upper left and click `Download Zip`).
+1. Clone or download this repository (go to the green `Code` button in the upper right and click `Download Zip`).
 2. Open **Chrome** and navigate to `chrome://extensions`.
 3. Enable **Developer mode** (toggle in the top-right corner).
 4. Click **Load unpacked** and select the `moxtags` folder (the one
