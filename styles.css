@@ -1,71 +1,82 @@
-/* MoxTags – side-panel for Scryfall Tagger tags next to Moxfield menus */
+/* MoxTags – submenu items for Scryfall Tagger tags in Moxfield menus */
 
-/* ── Side panel (positioned next to the context menu) ─────────────── */
-.moxtags-panel {
-  position: fixed;
-  z-index: 100000;
+/* ── Wrapper for all injected elements ────────────────────────────── */
+.moxtags-injected {
+  /* Sits inline in the menu flow */
+}
+
+/* ── Divider above the tag submenus ───────────────────────────────── */
+.moxtags-divider {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.1);
+  margin: 4px 0;
+}
+
+/* ── Submenu trigger (looks like a native menu item) ──────────────── */
+.moxtags-trigger {
+  position: relative;
+  display: flex;
+  align-items: center;
+  padding: 6px 16px;
+  font-size: 14px;
+  line-height: 1.4;
+  color: rgba(255, 255, 255, 0.85);
+  cursor: default;
+  white-space: nowrap;
+  user-select: none;
+  transition: background-color 0.1s ease;
+}
+
+.moxtags-trigger:hover {
+  background-color: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}
+
+.moxtags-trigger-label {
+  flex: 1;
+}
+
+.moxtags-trigger-count {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.35);
+  margin: 0 8px 0 6px;
+}
+
+.moxtags-trigger-arrow {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+/* ── Flyout submenu ───────────────────────────────────────────────── */
+.moxtags-submenu {
+  display: none;
+  position: absolute;
+  left: 100%;
+  top: 0;
+  z-index: 100001;
+  min-width: 180px;
+  max-width: 300px;
+  max-height: 400px;
+  overflow-y: auto;
   background: #2b2b2b;
   border: 1px solid rgba(255, 255, 255, 0.15);
   border-radius: 6px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
-  overflow-y: auto;
-  min-width: 180px;
-  max-width: 360px;
-  color: rgba(255, 255, 255, 0.85);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  font-size: 13px;
+  padding: 4px 0;
 }
 
-/* ── Two-column layout for art + card tag sections ────────────────── */
-.moxtags-columns {
-  display: flex;
-  flex-direction: row;
-  align-items: stretch;
+.moxtags-trigger:hover > .moxtags-submenu {
+  display: block;
 }
 
-.moxtags-columns > .moxtags-section {
-  flex: 1 1 0;
-  min-width: 140px;
-}
-
-/* Divider between columns */
-.moxtags-columns > .moxtags-section + .moxtags-section {
-  border-left: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-/* ── Section container ─────────────────────────────────────────────── */
-.moxtags-section {
-  padding: 4px 0 6px;
-}
-
-/* ── Section header ("Art Tags", "Card Tags") ─────────────────────── */
-.moxtags-section-header {
-  padding: 6px 12px 4px;
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.8px;
-  color: rgba(255, 255, 255, 0.45);
-  user-select: none;
-  pointer-events: none;
-}
-
-/* ── Tag list (scrollable if many tags) ───────────────────────────── */
-.moxtags-tag-list {
-  display: flex;
-  flex-direction: column;
-  max-height: 300px;
-  overflow-y: auto;
-}
-
-/* Thin scrollbar styling */
-.moxtags-tag-list::-webkit-scrollbar {
+/* Thin scrollbar */
+.moxtags-submenu::-webkit-scrollbar {
   width: 6px;
 }
-.moxtags-tag-list::-webkit-scrollbar-track {
+.moxtags-submenu::-webkit-scrollbar-track {
   background: transparent;
 }
-.moxtags-tag-list::-webkit-scrollbar-thumb {
+.moxtags-submenu::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.15);
   border-radius: 3px;
 }
@@ -73,7 +84,7 @@
 /* ── Individual tag link ──────────────────────────────────────────── */
 .moxtags-tag-item {
   display: block;
-  padding: 4px 12px;
+  padding: 5px 14px;
   font-size: 13px;
   line-height: 1.4;
   color: rgba(255, 255, 255, 0.85);
@@ -93,8 +104,8 @@
 
 /* ── Loading indicator ────────────────────────────────────────────── */
 .moxtags-loading {
-  padding: 10px 12px;
-  font-size: 12px;
+  padding: 6px 16px;
+  font-size: 13px;
   color: rgba(255, 255, 255, 0.4);
   font-style: italic;
 }
@@ -106,8 +117,8 @@
 
 /* ── "No tags found" message ─────────────────────────────────────── */
 .moxtags-empty {
-  padding: 10px 12px;
-  font-size: 12px;
+  padding: 6px 16px;
+  font-size: 13px;
   color: rgba(255, 255, 255, 0.3);
   font-style: italic;
 }

@@ -204,8 +204,11 @@
   function isCardMenu(el) {
     if (!el || el === document.body || el === document.documentElement) return false;
     // Skip our own injected elements.
-    if (el.classList?.contains('moxtags-panel') || el.closest?.('.moxtags-panel')) return false;
-    const text = el.textContent || '';
+    if (el.closest?.('.moxtags-injected') || el.closest?.('.moxtags-submenu')) return false;
+    // Exclude text from our injected elements when checking.
+    const clone = el.cloneNode(true);
+    clone.querySelectorAll('.moxtags-injected').forEach(n => n.remove());
+    const text = clone.textContent || '';
     if (text.length < 20 || text.length > 8000) return false;
     let hits = 0;
     for (const kw of MENU_KEYWORDS) {
@@ -271,9 +274,8 @@
     if (injecting) return;
     injecting = true;
 
-    // Guard: remove any previous panel.
-    const existing = document.querySelector('.moxtags-panel');
-    if (existing) existing.remove();
+    // Remove any previous injection in this menu.
+    menu.querySelectorAll('.moxtags-injected').forEach(el => el.remove());
 
     if (!currentCard) {
       warn('No card context when menu opened');
@@ -284,30 +286,36 @@
     const { name, set, cn } = currentCard;
     const cacheKey = `${set}/${cn}`;
 
-    // Create the side panel and position it next to the menu.
-    const panel = document.createElement('div');
-    panel.className = 'moxtags-panel';
+    // Find the "Buy on Mana Pool" item to insert after.
+    const anchor = findAnchorItem(menu, 'Buy on Mana Pool');
+    const insertionPoint = anchor || menu.lastElementChild;
 
+    // Create a wrapper for all our injected elements.
+    const wrapper = document.createElement('div');
+    wrapper.className = 'moxtags-injected';
+
+    // Divider
+    const divider = document.createElement('div');
+    divider.className = 'moxtags-divider';
+    wrapper.appendChild(divider);
+
+    // Loading indicator
     const loader = document.createElement('div');
     loader.className = 'moxtags-loading';
-    loader.textContent = `Loading tags…`;
-    panel.appendChild(loader);
+    loader.textContent = 'Loading tags…';
+    wrapper.appendChild(loader);
 
-    // Insert the panel as a sibling right after the menu.
-    menu.parentElement.insertBefore(panel, menu.nextSibling);
+    // Insert after the anchor.
+    insertionPoint.after(wrapper);
 
-    // Position the panel to the right of the menu.
-    positionPanel(menu, panel);
-
-    // Also remove the panel when the menu disappears.
+    // Reset injecting when menu disappears.
     const cleanup = new MutationObserver(() => {
-      if (!document.body.contains(menu) || menu.offsetParent === null) {
-        panel.remove();
+      if (!document.body.contains(menu)) {
         cleanup.disconnect();
         injecting = false;
       }
     });
-    cleanup.observe(document.body, { childList: true, subtree: true, attributes: true });
+    cleanup.observe(document.body, { childList: true, subtree: true });
 
     try {
       let tags = tagCache.get(cacheKey);
@@ -317,8 +325,7 @@
       }
 
       loader.remove();
-      renderTagSections(panel, tags);
-      positionPanel(menu, panel);
+      renderSubmenus(wrapper, tags);
     } catch (err) {
       error('Tag fetch failed:', err);
       loader.textContent = 'Failed to load tags';
@@ -326,23 +333,24 @@
     }
   }
 
-  function positionPanel(menu, panel) {
-    const rect = menu.getBoundingClientRect();
-    panel.style.position = 'fixed';
-    panel.style.top = rect.top + 'px';
-    panel.style.left = (rect.right + 2) + 'px';
-    // If the panel would go off-screen to the right, put it on the left.
-    requestAnimationFrame(() => {
-      const panelRect = panel.getBoundingClientRect();
-      if (panelRect.right > window.innerWidth - 10) {
-        panel.style.left = (rect.left - panelRect.width - 2) + 'px';
+  /**
+   * Find a menu item by its visible text. Returns the top-level item
+   * element (direct child of `menu`) that contains the target text.
+   */
+  function findAnchorItem(menu, text) {
+    // Search all descendants for the text.
+    const all = menu.querySelectorAll('*');
+    for (const el of all) {
+      if (el.textContent?.trim() === text) {
+        // Walk up to the direct child of `menu`.
+        let item = el;
+        while (item.parentElement && item.parentElement !== menu) {
+          item = item.parentElement;
+        }
+        if (item.parentElement === menu) return item;
       }
-      // Clamp height so it doesn't go off bottom.
-      const maxH = window.innerHeight - rect.top - 10;
-      if (maxH > 100) {
-        panel.style.maxHeight = maxH + 'px';
-      }
-    });
+    }
+    return null;
   }
 
   // ─── Scryfall Tagger fetching (GraphQL) ─────────────────────────────
@@ -366,39 +374,45 @@
   }
 
   // ─── Rendering ─────────────────────────────────────────────────────
-  function renderTagSections(panel, tags) {
+  function renderSubmenus(wrapper, tags) {
     if (tags.artTags.length === 0 && tags.cardTags.length === 0) {
       const empty = document.createElement('div');
       empty.className = 'moxtags-empty';
       empty.textContent = 'No tags found';
-      panel.appendChild(empty);
+      wrapper.appendChild(empty);
       return;
     }
 
-    const cols = document.createElement('div');
-    cols.className = 'moxtags-columns';
-
     if (tags.artTags.length > 0) {
-      cols.appendChild(buildSection('Art Tags', tags.artTags, 'art'));
+      wrapper.appendChild(buildSubmenuTrigger('Art Tags', tags.artTags, 'art'));
     }
     if (tags.cardTags.length > 0) {
-      cols.appendChild(buildSection('Card Tags', tags.cardTags, 'otag'));
+      wrapper.appendChild(buildSubmenuTrigger('Card Tags', tags.cardTags, 'otag'));
     }
-
-    panel.appendChild(cols);
   }
 
-  function buildSection(title, tags, searchPrefix) {
-    const section = document.createElement('div');
-    section.className = 'moxtags-section';
+  function buildSubmenuTrigger(title, tags, searchPrefix) {
+    const trigger = document.createElement('div');
+    trigger.className = 'moxtags-trigger';
 
-    const header = document.createElement('div');
-    header.className = 'moxtags-section-header';
-    header.textContent = title;
-    section.appendChild(header);
+    const label = document.createElement('span');
+    label.className = 'moxtags-trigger-label';
+    label.textContent = title;
+    trigger.appendChild(label);
 
-    const list = document.createElement('div');
-    list.className = 'moxtags-tag-list';
+    const arrow = document.createElement('span');
+    arrow.className = 'moxtags-trigger-arrow';
+    arrow.textContent = '▸';
+    trigger.appendChild(arrow);
+
+    const count = document.createElement('span');
+    count.className = 'moxtags-trigger-count';
+    count.textContent = `(${tags.length})`;
+    trigger.appendChild(count);
+
+    // Flyout submenu
+    const submenu = document.createElement('div');
+    submenu.className = 'moxtags-submenu';
 
     for (const tag of tags) {
       const a = document.createElement('a');
@@ -409,11 +423,41 @@
         e.stopPropagation();
         window.location.href = a.href;
       });
-      list.appendChild(a);
+      submenu.appendChild(a);
     }
 
-    section.appendChild(list);
-    return section;
+    trigger.appendChild(submenu);
+
+    // Position the submenu on hover so it doesn't overflow the viewport.
+    trigger.addEventListener('mouseenter', () => {
+      positionSubmenu(trigger, submenu);
+    });
+
+    return trigger;
+  }
+
+  function positionSubmenu(trigger, submenu) {
+    // Reset to default (right side).
+    submenu.style.left = '100%';
+    submenu.style.right = '';
+    submenu.style.top = '0';
+
+    requestAnimationFrame(() => {
+      const triggerRect = trigger.getBoundingClientRect();
+      const subRect = submenu.getBoundingClientRect();
+
+      // Flip to left if it overflows to the right.
+      if (triggerRect.right + subRect.width > window.innerWidth - 10) {
+        submenu.style.left = '';
+        submenu.style.right = '100%';
+      }
+
+      // Shift up if it overflows at the bottom.
+      const overflow = subRect.bottom - window.innerHeight + 10;
+      if (overflow > 0) {
+        submenu.style.top = -overflow + 'px';
+      }
+    });
   }
 
   // ─── Background communication ──────────────────────────────────────
