@@ -44,11 +44,22 @@
   }
 
   function cleanup() {
+    log('cleanup: disconnecting observer, removing listeners');
     if (observer) observer.disconnect();
     document.removeEventListener('mousedown', onMouseDown, true);
     cardMap.clear();
     tagCache.clear();
     currentCard = null;
+
+    // Remove stale page_hook data from a previous deck so the next
+    // init cycle doesn't pick up old data.
+    const staleEl = document.getElementById('moxtags-deck-json');
+    if (staleEl) {
+      log('cleanup: removing stale moxtags-deck-json element');
+      staleEl.remove();
+    }
+    document.documentElement.removeAttribute('data-moxtags-deck');
+    log('cleanup: removed data-moxtags-deck attribute');
   }
 
   function extractDeckId() {
@@ -57,51 +68,205 @@
   }
 
   // ─── Deck data ─────────────────────────────────────────────────────
+
+  /**
+   * Read the intercepted deck JSON that page_hook.js stored in a hidden
+   * DOM element.  Returns the parsed object, or null if not found.
+   */
+  function readInterceptedDeck() {
+    const el = document.getElementById('moxtags-deck-json');
+    log('readInterceptedDeck: element found:', !!el);
+    if (!el) return null;
+    const text = el.textContent;
+    log('readInterceptedDeck: textContent length:', text ? text.length : 0);
+    try {
+      const data = JSON.parse(text);
+      const keys = data ? Object.keys(data) : [];
+      log('readInterceptedDeck: parsed OK, top-level keys:', keys.slice(0, 15).join(', '));
+      return data;
+    } catch (e) {
+      warn('readInterceptedDeck: JSON parse error:', e.message);
+      return null;
+    }
+  }
+
+  /**
+   * Wait for page_hook.js to store the intercepted deck data in the DOM.
+   * The hook sets data-moxtags-deck="ready" on <html> when the data is
+   * available.  We watch for that attribute via MutationObserver.
+   */
+  function waitForInterceptedDeck(timeoutMs = 12000) {
+    return new Promise((resolve) => {
+      const attrVal = document.documentElement.getAttribute('data-moxtags-deck');
+      log('waitForInterceptedDeck: current attr value:', JSON.stringify(attrVal));
+
+      // Already available?
+      if (attrVal === 'ready') {
+        log('waitForInterceptedDeck: data already ready, reading now');
+        return resolve(readInterceptedDeck());
+      }
+
+      log('waitForInterceptedDeck: setting up MutationObserver, timeout:', timeoutMs, 'ms');
+      const obs = new MutationObserver((mutations) => {
+        for (const m of mutations) {
+          log('waitForInterceptedDeck: mutation detected –',
+            m.attributeName, '=', document.documentElement.getAttribute(m.attributeName));
+        }
+        if (document.documentElement.getAttribute('data-moxtags-deck') === 'ready') {
+          log('waitForInterceptedDeck: ready signal received via MutationObserver');
+          obs.disconnect();
+          clearTimeout(timer);
+          resolve(readInterceptedDeck());
+        }
+      });
+      obs.observe(document.documentElement, {
+        attributes: true,
+        attributeFilter: ['data-moxtags-deck'],
+      });
+
+      const timer = setTimeout(() => {
+        obs.disconnect();
+        // Check one more time in case we missed it
+        const finalVal = document.documentElement.getAttribute('data-moxtags-deck');
+        log('waitForInterceptedDeck: TIMED OUT after', timeoutMs, 'ms. Final attr:', JSON.stringify(finalVal));
+        const domEl = document.getElementById('moxtags-deck-json');
+        log('waitForInterceptedDeck: moxtags-deck-json element exists at timeout:', !!domEl);
+        if (finalVal === 'ready') {
+          log('waitForInterceptedDeck: attr is ready at timeout – reading anyway');
+          resolve(readInterceptedDeck());
+        } else {
+          resolve(null);
+        }
+      }, timeoutMs);
+    });
+  }
+
   async function fetchDeckData() {
-    // Try the known Moxfield API endpoints.
-    for (const base of [
+    log('fetchDeckData: starting, deckId =', deckId);
+
+    // Start listening for the intercepted deck data immediately, so the
+    // MutationObserver is active while we try the public API below.
+    const interceptPromise = waitForInterceptedDeck(12000);
+
+    // Strategy 1: Try the background-script fetch (public decks, fast path).
+    const urls = [
       `https://api2.moxfield.com/v3/decks/all/${deckId}`,
       `https://api2.moxfield.com/v2/decks/all/${deckId}`,
-      `https://api.moxfield.com/v2/decks/all/${deckId}`,
-    ]) {
+    ];
+
+    for (const url of urls) {
+      log('fetchDeckData: Strategy 1 – trying', url);
       try {
-        const text = await bgFetch(base);
+        const text = await bgFetch(url);
+        log('fetchDeckData: bgFetch returned', text.length, 'chars');
         const data = JSON.parse(text);
+        const keys = data ? Object.keys(data) : [];
+        log('fetchDeckData: parsed response keys:', keys.slice(0, 15).join(', '));
         if (buildCardMap(data)) {
+          log('fetchDeckData: Strategy 1 SUCCESS');
           prefetchAllTags();
           return;
         }
-      } catch (_) {
-        // Try next endpoint.
+        log('fetchDeckData: buildCardMap returned false for', url);
+      } catch (e) {
+        log('fetchDeckData: Strategy 1 failed for', url, '–', e.message);
       }
     }
-    warn('Could not load deck data from API – tag injection will not work.');
+
+    // Strategy 2: Wait for Moxfield's own fetch to be intercepted by
+    // page_hook.js (works for private decks – their JS has auth).
+    log('Public API failed – waiting for intercepted deck data…');
+    log('fetchDeckData: Strategy 2 – awaiting interceptPromise…');
+    const data = await interceptPromise;
+    log('fetchDeckData: interceptPromise resolved, data is', data === null ? 'null' : typeof data);
+    if (data) {
+      const keys = Object.keys(data);
+      log('fetchDeckData: intercepted data keys:', keys.slice(0, 15).join(', '));
+    }
+    if (data && buildCardMap(data)) {
+      log('fetchDeckData: Strategy 2 SUCCESS');
+      prefetchAllTags();
+      return;
+    }
+
+    warn('Could not load deck data – tag injection will not work.');
   }
 
   /**
    * Walk every board in the deck JSON and populate `cardMap`.
+   * Handles two API response shapes:
+   *   v2: boards are top-level, entries have a `.card` wrapper
+   *   v3: boards are nested under `data.boards`, entries are flat card objects
+   *       (and also within each board, entries can be wrapped: { card: {...} }
+   *        or the v3 board values can be { quantity, ..., card: {...} } style)
    * Returns true if at least one card was found.
    */
   function buildCardMap(data) {
-    if (!data || typeof data !== 'object') return false;
+    if (!data || typeof data !== 'object') {
+      log('buildCardMap: invalid data –', data === null ? 'null' : typeof data);
+      return false;
+    }
 
-    const boards = [
+    const boardNames = [
       'mainboard', 'sideboard', 'commanders', 'companions',
       'signatureSpells', 'considering', 'attractions',
       'stickers', 'contraptions', 'planes', 'schemes', 'tokens',
     ];
 
-    for (const boardName of boards) {
-      const board = data[boardName];
+    log('buildCardMap: data top-level keys:', Object.keys(data).slice(0, 20).join(', '));
+
+    // Determine where the boards live: under data.boards (v3) or top-level (v2).
+    const boardSource = (data.boards && typeof data.boards === 'object')
+      ? data.boards
+      : data;
+    log('buildCardMap: using', boardSource === data ? 'top-level' : 'data.boards', 'as board source');
+    if (boardSource !== data) {
+      log('buildCardMap: data.boards keys:', Object.keys(boardSource).join(', '));
+    }
+
+    for (const boardName of boardNames) {
+      let board = boardSource[boardName];
       if (!board || typeof board !== 'object') continue;
 
-      for (const entry of Object.values(board)) {
-        const card = entry?.card;
+      // v3 wraps each board as { count: N, cards: { id: {...}, … } }.
+      // Unwrap to the inner cards object if present.
+      if (board.cards && typeof board.cards === 'object') {
+        log('buildCardMap: board', boardName, 'has .cards wrapper (count:', board.count, ')');
+        board = board.cards;
+      }
+
+      const entries = Object.values(board);
+      if (entries.length === 0) continue;
+      log('buildCardMap: board', boardName, 'has', entries.length, 'entries');
+
+      // Log the first entry's structure for debugging.
+      const first = entries[0];
+      if (first) {
+        const firstKeys = Object.keys(first);
+        log('buildCardMap: first entry in', boardName, '– keys:',
+          firstKeys.slice(0, 15).join(', '), firstKeys.length > 15 ? '(+more)' : '');
+        if (first.card) {
+          log('buildCardMap:   → has .card wrapper – card.name:', first.card.name,
+            'set:', first.card.set, 'cn:', first.card.cn);
+        } else if (first.name) {
+          log('buildCardMap:   → flat entry – name:', first.name,
+            'set:', first.set, 'cn:', first.cn);
+        }
+      }
+
+      for (const entry of entries) {
+        // v2 format: { card: { name, set, cn, … }, quantity, … }
+        // v3 format: the entry itself is the card object { name, set, cn, … }
+        //   or sometimes: { quantity, boardType, card: { name, set, cn, … } }
+        const card = entry?.card || entry;
         if (!card?.name) continue;
 
         const set = (card.set || card.setCode || '').toLowerCase();
         const cn  = String(card.cn || card.collector_number || card.collectorNumber || '');
-        if (!set || !cn) continue;
+        if (!set || !cn) {
+          log('buildCardMap: skipping card', card.name, '– set:', set, 'cn:', cn);
+          continue;
+        }
 
         const info = { name: card.name, set, cn };
         cardMap.set(card.name.toLowerCase(), info);

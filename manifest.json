@@ -21,6 +21,15 @@
         "https://moxfield.com/decks/*",
         "https://www.moxfield.com/decks/*"
       ],
+      "js": ["page_hook.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://moxfield.com/decks/*",
+        "https://www.moxfield.com/decks/*"
+      ],
       "js": ["content.js"],
       "css": ["styles.css"],
       "run_at": "document_idle"

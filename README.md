@@ -44,6 +44,7 @@ card context menus on [Moxfield](https://moxfield.com).
 | `styles.css`    | Styles for the injected tag sections                            |
 | `popup.html`    | Toolbar popup — tag cache status UI                             |
 | `popup.js`      | Toolbar popup logic — queries background for cache status       |
+| `page_hook.js`  | Page-context hook — captures Moxfield auth for private decks    |
 
 ## Tag Data Cache
 
@@ -86,9 +87,13 @@ The popup also shows:
 
 ## Notes
 
-- The extension works for **public decks**. Private decks require
-  authentication cookies that the background service worker does not
-  currently forward — this may be added in a future version.
+- The extension works for both **public and private decks**. For private
+  decks, a small page-context hook (`page_hook.js`) captures the
+  `Authorization` header that Moxfield's own JavaScript sends to its API.
+  The content script then reuses that token (along with session cookies)
+  when fetching deck data. If the token isn't available (e.g. logged out),
+  the extension falls back to an unauthenticated request, which works for
+  public decks.
 - Art tag search links use the `art:` prefix and card tag links use `otag:`.
 
 ## License
