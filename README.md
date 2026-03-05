@@ -1,11 +1,44 @@
-# MoxTags
+<p align="center"><img width="273" height="773" alt="image"  src="https://github.com/user-attachments/assets/5b4386cf-3e44-472f-a92d-51ddb96234b2" /></p>
+
 
 A Chrome extension that adds **Scryfall Tagger** art tags and card tags to the
 card context menus on [Moxfield](https://moxfield.com).
 
-<img width="531" height="828" alt="Image" src="https://github.com/user-attachments/assets/267dd949-2cee-46c2-97c3-132904beb610" />
+<p align="center"><img width="531" height="828" alt="Image" src="https://github.com/user-attachments/assets/267dd949-2cee-46c2-97c3-132904beb610" /></p>
 
-## How It Works
+## MoxTags
+MoxTags brings Scryfall Tagger's community-curated tags directly into your Moxfield deck building experience.
+
+When you're building a deck on Moxfield, finding the right cards to fill a role can be surprisingly difficult. You know you need more ramp, or more removal, or another sacrifice outlet — but crafting the perfect search query is an exercise in frustration. Cards that do similar things are often worded completely differently, and even the most carefully written search will inevitably miss options you didn't think to look for.
+
+That's where Scryfall's Tagger system shines. Thousands of Magic: The Gathering cards have been tagged by the community with intuitive functional labels like "ramp," "card-draw," "sacrifice-outlet," "board-wipe," and hundreds more. These tags capture what a card does, not just what it says, which means you can find cards by role and function rather than trying to guess every possible wording.
+
+The problem? Moxfield doesn't surface these tags anywhere. You'd have to leave your deck, go to Scryfall, look up each card, check its tags, and then manually search by those tags — constantly switching back and forth between sites. MoxTags eliminates that friction entirely.
+
+### How it works:
+
+Right-click any card in your Moxfield deck list and you'll see two new submenus in the context menu: Art Tags and Card Tags. Art Tags are specific to the particular printing and illustration of a card (useful for tracking artists, visual themes, and art-specific details). Card Tags describe the card's mechanical function and are shared across all printings.
+
+Each submenu lists every Scryfall Tagger tag associated with that card. Click any tag to instantly search your deck for other cards sharing that same tag. Even better, you can check multiple tags and search for the combination — perfect for narrowing down exactly the kind of card you need.
+
+For example, right-click your Commander and see that it's tagged with "sacrifice-outlet" and "aristocrats." Click either tag to discover which other cards in your deck share those synergies, or head to Scryfall to search the full card database for more options that fit the same role.
+
+### Key features:
+
+• Art tags and card tags for every card in your deck, right in the context menu
+• Multi-tag search — check multiple tags and search for cards matching any combination
+• Works with private decks — MoxTags reads your deck data as the page loads, so it works even with decks that aren't shared publicly
+• Printing-aware — different printings of the same card can have different art tags, and MoxTags respects which specific version is in your deck
+• Fast and lightweight — tag data is cached locally and refreshed daily, so lookups are nearly instant
+• No account required — MoxTags uses Scryfall's public tag data and doesn't require you to log into anything
+
+### Why tag-based search matters for deck building:
+
+Traditional text-based search works when you know exactly what you're looking for. But deck building is often about discovery — finding cards you didn't know existed that happen to do exactly what your deck needs. A search for "draw a card" won't find Rhystic Study. A search for "destroy target creature" won't find Toxic Deluge. But the tags "card-draw" and "board-wipe" will find all of them and more, because the tags describe function, not wording.
+
+MoxTags puts that discovery power right where you're already building your deck.
+
+## Technical Details
 
 1. When you open a deck page on Moxfield, the extension fetches the deck data
    from the Moxfield API to learn each card's **set code** and **collector
