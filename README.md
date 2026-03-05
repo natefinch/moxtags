@@ -1,9 +1,10 @@
-# MoxTags
+<p align="center"><img width="273" height="773" alt="image"  src="https://github.com/user-attachments/assets/5b4386cf-3e44-472f-a92d-51ddb96234b2" /></p>
+
 
 A Chrome extension that adds **Scryfall Tagger** art tags and card tags to the
 card context menus on [Moxfield](https://moxfield.com).
 
-<img width="531" height="828" alt="Image" src="https://github.com/user-attachments/assets/267dd949-2cee-46c2-97c3-132904beb610" />
+<p align="center"><img width="531" height="828" alt="Image" src="https://github.com/user-attachments/assets/267dd949-2cee-46c2-97c3-132904beb610" /></p>
 
 ## How It Works
 
