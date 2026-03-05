@@ -9,10 +9,7 @@
     "alarms"
   ],
   "host_permissions": [
-    "https://moxfield.com/*",
-    "https://www.moxfield.com/*",
     "https://api2.moxfield.com/*",
-    "https://api.moxfield.com/*",
     "https://api.scryfall.com/*"
   ],
   "content_scripts": [
