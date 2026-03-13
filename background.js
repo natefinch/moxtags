@@ -23,13 +23,15 @@ let cardIdCache = new Map();
 // ─── Startup ─────────────────────────────────────────────────────────
 chrome.runtime.onInstalled.addListener(() => {
   scheduleRefresh();
+  // Start downloading tag data immediately so it's ready when the user
+  // first visits a deck page.
+  ensureIndexes().catch(err =>
+    console.warn('[MoxTags BG] Initial index load failed:', err.message));
 });
 
 chrome.runtime.onStartup.addListener(() => {
   scheduleRefresh();
 });
-
-// Indexes are loaded lazily on first fetchTags call, not at startup.
 
 // ─── Message handling ────────────────────────────────────────────────
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
@@ -102,6 +104,7 @@ async function doFetch(url, options) {
 // ─── Tag lookup ──────────────────────────────────────────────────────
 async function fetchTags(set, number) {
   try {
+    const indexesReady = !!(oracleIndex && illustrationIndex);
     await ensureIndexes();
 
     const key = `${set}/${number}`;
@@ -126,9 +129,11 @@ async function fetchTags(set, number) {
       ? (illustrationIndex.get(ids.illustrationId) || [])
       : [];
 
-    return { ok: true, artTags, cardTags };
+    return { ok: true, artTags, cardTags, cacheLoading: refreshing };
   } catch (err) {
-    return { ok: false, error: err.message };
+    // If indexes haven't loaded yet, signal that the cache is still loading
+    // so the UI can show an appropriate message instead of an error.
+    return { ok: false, error: err.message, cacheLoading: refreshing || !oracleIndex };
   }
 }
 

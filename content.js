@@ -524,8 +524,13 @@
       renderSubmenus(wrapper, tags);
     } catch (err) {
       error('Tag fetch failed:', err);
-      loader.textContent = 'Failed to load tags';
-      loader.classList.add('moxtags-error');
+      if (err.cacheLoading) {
+        loader.textContent = 'Downloading tag data…';
+        loader.classList.add('moxtags-cache-loading');
+      } else {
+        loader.textContent = 'Failed to load tags';
+        loader.classList.add('moxtags-error');
+      }
     }
   }
 
@@ -560,9 +565,11 @@
           }
           if (resp?.ok) {
             log(`Tags loaded: ${resp.artTags.length} art, ${resp.cardTags.length} card`);
-            resolve({ artTags: resp.artTags, cardTags: resp.cardTags });
+            resolve({ artTags: resp.artTags, cardTags: resp.cardTags, cacheLoading: resp.cacheLoading });
           } else {
-            reject(new Error(resp?.error || 'Tag fetch failed'));
+            const err = new Error(resp?.error || 'Tag fetch failed');
+            err.cacheLoading = resp?.cacheLoading;
+            reject(err);
           }
         }
       );
@@ -573,8 +580,13 @@
   function renderSubmenus(wrapper, tags) {
     if (tags.artTags.length === 0 && tags.cardTags.length === 0) {
       const empty = document.createElement('div');
-      empty.className = 'moxtags-empty';
-      empty.textContent = 'No tags found';
+      if (tags.cacheLoading) {
+        empty.className = 'moxtags-loading moxtags-cache-loading';
+        empty.textContent = 'Downloading tag data…';
+      } else {
+        empty.className = 'moxtags-empty';
+        empty.textContent = 'No tags found';
+      }
       wrapper.appendChild(empty);
       return;
     }
