@@ -167,3 +167,9 @@
   color: rgba(255, 255, 255, 0.3);
   font-style: italic;
 }
+
+/* ── Cache loading indicator ──────────────────────────────────────── */
+.moxtags-cache-loading {
+  color: rgba(249, 226, 175, 0.7);
+  font-style: italic;
+}
