@@ -94,7 +94,7 @@ if [[ "$BRANCH" != "main" ]]; then
   exit 1
 fi
 
-# Check for uncommitted changes
+Check for uncommitted changes
 if ! git diff --quiet || ! git diff --cached --quiet; then
   echo "Error: you have uncommitted changes. Please commit or stash them first."
   exit 1
@@ -106,7 +106,7 @@ if git rev-parse "$TAG" &>/dev/null; then
   exit 1
 fi
 
-# --- Update version in manifest.json and package.json ---
+# --- Update version in manifest.json ---
 
 echo "Updating version to $VERSION..."
 
@@ -118,11 +118,6 @@ node -e "
   writeFileSync('manifest.json', JSON.stringify(json, null, 2) + '\n');
   console.log('  manifest.json ✓');
 "
-
-# --- Build ---
-
-echo "Building extension..."
-npm run build
 
 # --- Commit version bump & tag ---
 
