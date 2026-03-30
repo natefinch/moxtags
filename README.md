@@ -1,16 +1,10 @@
 <p align="center"><img width="273" height="773" alt="image"  src="https://github.com/user-attachments/assets/5b4386cf-3e44-472f-a92d-51ddb96234b2" /></p>
 
-
 A Chrome extension that adds **Scryfall Tagger** art tags and card tags to the
-card context menus on [Moxfield](https://moxfield.com) as well as adding tag auto-complete in search bars:
-
-<p align="center"><img width="600" height="828" alt="Image" src="https://github.com/user-attachments/assets/267dd949-2cee-46c2-97c3-132904beb610" /><br/><br/>
-
-<img width="531" height="569" alt="image" src="https://github.com/user-attachments/assets/9c048386-4015-4c1c-9389-c8e8bbcb04b6" />
-
-</p>
+card context menus on [Moxfield](https://moxfield.com) as well as adding tag auto-complete in search bars.
 
 ## MoxTags
+
 MoxTags brings Scryfall Tagger's community-curated tags directly into your Moxfield deck building experience.
 
 When you're building a deck on Moxfield, finding the right cards to fill a role can be surprisingly difficult. You know you need more ramp, or more removal, or another sacrifice outlet — but crafting the perfect search query is an exercise in frustration. Cards that do similar things are often worded completely differently, and even the most carefully written search will inevitably miss options you didn't think to look for.
@@ -19,22 +13,26 @@ That's where Scryfall's Tagger system shines. Thousands of Magic: The Gathering 
 
 The problem? Moxfield doesn't surface these tags anywhere. You'd have to leave your deck, go to Scryfall, look up each card, check its tags, and then manually search by those tags — constantly switching back and forth between sites. MoxTags eliminates that friction entirely.
 
-### How it works:
+## Install
 
-Right-click any card in your Moxfield deck list and you'll see two new submenus in the context menu: Art Tags and Card Tags. Art Tags are specific to the particular printing and illustration of a card (useful for tracking artists, visual themes, and art-specific details). Card Tags describe the card's mechanical function and are shared across all printings.
+Go to [releases](./releases) to install the latest release.
+
+## Right Click Menu
+
+<p align="center"><img width="600" height="828" alt="Image" src="https://github.com/user-attachments/assets/267dd949-2cee-46c2-97c3-132904beb610" /></p>
+
+Right-click any card in your Moxfield deck list or hit the card's dropdown arrow, and you'll see two new submenus at the bottom of the menu: Art Tags and Card Tags. Art Tags are specific to the particular printing and illustration of a card (useful for tracking artists, visual themes, and art-specific details). Card Tags describe the card's mechanical function and are shared across all printings.
 
 Each submenu lists every Scryfall Tagger tag associated with that card. Click any tag to instantly search your deck for other cards sharing that same tag. Even better, you can check multiple tags and search for the combination — perfect for narrowing down exactly the kind of card you need.
 
 For example, right-click your Commander and see that it's tagged with "sacrifice-outlet" and "aristocrats." Click either tag to discover which other cards in your deck share those synergies, or head to Scryfall to search the full card database for more options that fit the same role.
 
-### Key features:
+## Tab Completion for Searches
 
-• Art tags and card tags for every card in your deck, right in the context menu
-• Multi-tag search — check multiple tags and search for cards matching any combination
-• Works with private decks — MoxTags reads your deck data as the page loads, so it works even with decks that aren't shared publicly
-• Printing-aware — different printings of the same card can have different art tags, and MoxTags respects which specific version is in your deck
-• Fast and lightweight — tag data is cached locally and refreshed daily, so lookups are nearly instant
-• No account required — MoxTags uses Scryfall's public tag data and doesn't require you to log into anything
+<p  align="center"><img width="531" height="569" alt="image" src="https://github.com/user-attachments/assets/9c048386-4015-4c1c-9389-c8e8bbcb04b6" />
+</p>
+
+Ever wanted to search by tags and couldn't remember exactly how the tag was worded? Now whenever you start typing `otag:` for functional tags or `art:` for art tags in the search bar, and type a few characters, moxtags will show you all tags that match what you've typed.
 
 ### Why tag-based search matters for deck building:
 
