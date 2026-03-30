@@ -18,10 +18,18 @@ const MAX_VISIBLE = 10;
 function filterTags(tagList, partial) {
   if (!partial) return [];
   const lowerPartial = partial.toLowerCase();
-  return tagList.filter(t => {
+  const filtered = tagList.filter(t => {
     const words = t.toLowerCase().split('-');
     return words.some(w => w.startsWith(lowerPartial));
   });
+  // Sort: whole-tag prefix matches first, then later-word matches, alphabetical within each.
+  filtered.sort((a, b) => {
+    const aPrefix = a.toLowerCase().startsWith(lowerPartial) ? 0 : 1;
+    const bPrefix = b.toLowerCase().startsWith(lowerPartial) ? 0 : 1;
+    if (aPrefix !== bPrefix) return aPrefix - bPrefix;
+    return a.localeCompare(b);
+  });
+  return filtered;
 }
 
 /**
@@ -109,7 +117,7 @@ describe('filterTags – word-prefix matching', () => {
 
   it('matches a word in the middle of a tag', () => {
     const result = filterTags(SAMPLE_TAGS, 'count');
-    assert.deepEqual(result, ['add-counters', 'add-counters-twice', 'counters-matter']);
+    assert.deepEqual(result, ['counters-matter', 'add-counters', 'add-counters-twice']);
   });
 
   it('does not match a substring that is not a word prefix', () => {
@@ -140,6 +148,19 @@ describe('filterTags – word-prefix matching', () => {
   it('exact word match works', () => {
     const result = filterTags(SAMPLE_TAGS, 'ramp');
     assert.deepEqual(result, ['ramp', 'ramp-artifact']);
+  });
+
+  it('sorts whole-tag prefix matches before later-word matches', () => {
+    const result = filterTags(SAMPLE_TAGS, 'count');
+    // counters-matter starts with "count", so it comes first;
+    // add-counters and add-counters-twice match a later word.
+    assert.deepEqual(result, ['counters-matter', 'add-counters', 'add-counters-twice']);
+  });
+
+  it('sorts alphabetically within each group', () => {
+    const tags = ['z-draw', 'draw-first', 'a-draw', 'draw-second'];
+    const result = filterTags(tags, 'draw');
+    assert.deepEqual(result, ['draw-first', 'draw-second', 'a-draw', 'z-draw']);
   });
 });
 

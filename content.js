@@ -905,6 +905,15 @@
       return;
     }
 
+    // Sort: tags starting with the partial come first (prefix match on the
+    // whole tag), then tags where a later word matches, each group alphabetical.
+    acFilteredTags.sort((a, b) => {
+      const aPrefix = a.toLowerCase().startsWith(lowerPartial) ? 0 : 1;
+      const bPrefix = b.toLowerCase().startsWith(lowerPartial) ? 0 : 1;
+      if (aPrefix !== bPrefix) return aPrefix - bPrefix;
+      return a.localeCompare(b);
+    });
+
     renderAcDropdown();
   }
 

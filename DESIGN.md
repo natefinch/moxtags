@@ -502,6 +502,11 @@ words start with the partial. For example, `count` matches `counters-matter`
 (the word "accounting" does not start with "count"). Matching is
 case-insensitive.
 
+Results are **sorted by relevance**: tags where the partial matches the
+beginning of the whole tag (e.g. `counters-matter` for `count`) appear first,
+followed by tags where a later word matches (e.g. `add-counters`). Within
+each group, tags are sorted alphabetically.
+
 In the dropdown, the matched portion of each word is displayed in **bold**
 so the user can see exactly what was matched.
 
