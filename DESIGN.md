@@ -14,6 +14,7 @@ code and for AI tools that need to understand how the system works.
 - [Card Identity Resolution](#card-identity-resolution)
 - [Menu Detection & Tag Injection](#menu-detection--tag-injection)
 - [UI Rendering](#ui-rendering)
+- [Search Box Tag Autocomplete](#search-box-tag-autocomplete)
 - [SPA Navigation Handling](#spa-navigation-handling)
 - [Popup UI](#popup-ui)
 - [Message Protocol](#message-protocol)
@@ -234,8 +235,10 @@ Two indexes are built:
 
 The indexes are serialized as arrays of `[key, value]` entries and stored in
 `chrome.storage.local` along with a `tagDataTimestamp`
-([background.js#L278-L284](background.js#L278-L284)). On subsequent loads,
-`ensureIndexes()` restores them from storage without re-fetching
+([background.js#L278-L284](background.js#L278-L284)). Additionally, sorted
+unique tag name lists (`oracleTagNames` and `artTagNames`) are stored for
+the search box autocomplete feature. On subsequent loads, `ensureIndexes()`
+restores all of these from storage without re-fetching
 ([background.js#L225-L237](background.js#L225-L237)).
 
 ### Refresh Schedule
@@ -437,6 +440,92 @@ a dark theme to match Moxfield's UI:
 
 ---
 
+## Search Box Tag Autocomplete
+
+The extension provides inline autocomplete suggestions for Scryfall tag names
+when the user types recognized prefixes into Moxfield's deck search input
+(`<input id="deckbox-search">`).
+
+### Supported Prefixes
+
+| Prefix        | Tag Type    | Example Input         | Suggestions                              |
+|---------------|------------|----------------------|------------------------------------------|
+| `otag:`       | Oracle tag | `otag:add-co`         | `add-counters`, `add-counters-twice`     |
+| `oracletag:`  | Oracle tag | `oracletag:ram`       | `ramp`, `ramp-artifact`, …               |
+| `function:`   | Oracle tag | `function:draw`       | `draw`, `draw-cards`, …                  |
+| `art:`        | Art tag    | `art:full`            | `full-art`, `full-body`, …               |
+| `atag:`       | Art tag    | `atag:lands`          | `landscape`, `landwalk`, …               |
+| `arttag:`     | Art tag    | `arttag:wa`           | `warrior`, `water`, …                    |
+
+Autocomplete triggers when a prefix appears anywhere in the query (mid-query
+completion), not just at the start. For example, `cmc>3 otag:ram` correctly
+triggers suggestions for the `otag:ram` portion.
+
+### Tag Name Lists
+
+During `refreshTagData()`, the background worker extracts sorted, deduplicated
+lists of tag label strings alongside the reverse indexes:
+
+- `oracleTagNames`: all unique oracle tag labels, sorted alphabetically
+- `artTagNames`: all unique illustration tag labels, sorted alphabetically
+
+These are persisted to `chrome.storage.local` and restored by
+`ensureIndexes()`. The content script fetches them lazily via the
+`getTagNames` message on the first autocomplete trigger, then caches them
+in-memory for subsequent use.
+
+### Search Box Detection
+
+On `init()`, `setupAutocomplete()` looks for `#deckbox-search`. If the
+element is not yet in the DOM (React may render it after `document_idle`), a
+`MutationObserver` watches for it to appear. Once found, `input`, `keydown`,
+`blur`, and `focus` listeners are attached. On `cleanup()`, all listeners
+and the observer are torn down and the dropdown is removed.
+
+### Input Parsing
+
+On each `input` event, the autocomplete logic determines the "current word"
+at the cursor position by walking backwards to the nearest space or start of
+string. If the word starts with a recognized prefix, the text after the colon
+is used as the filter partial.
+
+### Filtering and Display
+
+Matching tags are shown in a dropdown (`<div class="moxtags-autocomplete">`)
+positioned directly below the search box. At least one character must be typed
+after the prefix colon before suggestions appear.
+
+Tags are matched using **word-prefix matching**: the typed partial is compared
+against each dash-delimited word in the tag name. A tag matches if any of its
+words start with the partial. For example, `count` matches `counters-matter`
+(word "counters") and `add-counters` (word "counters") but not `accounting`
+(the word "accounting" does not start with "count"). Matching is
+case-insensitive.
+
+In the dropdown, the matched portion of each word is displayed in **bold**
+so the user can see exactly what was matched.
+
+For short partials (1–2 characters), the rendered item count is capped at 50
+to avoid DOM performance issues. At 3+ characters the cap is removed and all
+matches are shown. The dropdown shows up to 10 items visibly, with scroll for
+additional matches. The first match is highlighted by default.
+
+### Interaction
+
+- **Keyboard:** `↑`/`↓` move the highlight, `Tab` inserts the highlighted
+  tag, `Escape` closes the dropdown. These keys are intercepted with
+  `preventDefault()` while the dropdown is visible.
+- **Mouse:** Click on an item to select it; hover to highlight. Mousewheel
+  scrolls the list natively via `overflow-y: auto`.
+- **Completion:** On selection (Tab or click), the text from the prefix word
+  start to the cursor is replaced with `prefix:tagname ` (with trailing
+  space). A synthetic `input` event is dispatched so Moxfield's React picks
+  up the change.
+- **Dismiss:** The dropdown closes on `Escape`, on blur (with a 200ms delay
+  to allow click events), and when the cursor moves away from a prefix word.
+
+---
+
 ## SPA Navigation Handling
 
 Moxfield is a single-page application, so navigating between decks doesn't
@@ -494,10 +583,11 @@ All messages use `chrome.runtime.sendMessage` with a `type` field.
 | `fetch`          | `content.js`  | `background.js` | `{ url, options? }`                 | `{ ok, body?, error?, status? }`                 |
 | `fetchTags`      | `content.js`  | `background.js` | `{ set, number }`                   | `{ ok, artTags?, cardTags?, error? }`            |
 | `prefetchDeck`   | `content.js`  | `background.js` | `{ cards: [{ set, cn }] }`          | `{ ok, tags?: { "set/cn": { artTags, cardTags } }, error? }` |
+| `getTagNames`    | `content.js`  | `background.js` | (none)                               | `{ ok, oracleTagNames?: string[], artTagNames?: string[], error? }` |
 | `getStatus`      | `popup.js`    | `background.js` | (none)                               | `{ refreshing, tagDataTimestamp, oracleCount, illustrationCount, lastError }` |
 | `refreshTags`    | `popup.js`    | `background.js` | (none)                               | `{ ok, error? }`                                 |
 
-All message handlers in [background.js#L35-L73](background.js#L35-L73)
+All message handlers in [background.js#L35-L82](background.js#L35-L82)
 return `true` from the `onMessage` listener to indicate asynchronous
 `sendResponse` usage.
 

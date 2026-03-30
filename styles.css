@@ -173,3 +173,48 @@
   color: rgba(249, 226, 175, 0.7);
   font-style: italic;
 }
+
+/* ── Autocomplete dropdown ───────────────────────────────────────── */
+.moxtags-autocomplete {
+  position: absolute;
+  z-index: 100001;
+  min-width: 200px;
+  max-height: 310px;
+  overflow-y: auto;
+  background: #2b2b2b;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  padding: 4px 0;
+  box-sizing: border-box;
+}
+
+/* Thin scrollbar */
+.moxtags-autocomplete::-webkit-scrollbar {
+  width: 6px;
+}
+.moxtags-autocomplete::-webkit-scrollbar-track {
+  background: transparent;
+}
+.moxtags-autocomplete::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+}
+
+.moxtags-autocomplete-item {
+  display: block;
+  padding: 5px 12px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: rgba(255, 255, 255, 0.85);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  user-select: none;
+}
+
+.moxtags-autocomplete-item.highlighted {
+  background-color: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}

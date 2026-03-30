@@ -16,6 +16,20 @@
   let observer = null;
   let lastUrl = location.href;
 
+  // ─── Autocomplete state ────────────────────────────────────────────
+  let acInput = null;           // the #deckbox-search element
+  let acDropdown = null;        // the dropdown container
+  let acItems = [];             // currently rendered items (DOM elements)
+  let acHighlightIdx = -1;     // index of highlighted item
+  let acFilteredTags = [];     // currently filtered tag names
+  let acCurrentPrefix = '';     // e.g. 'otag:'
+  let acCurrentPartial = '';    // text typed after the prefix colon
+  let acWordStart = 0;          // index in input.value where the current prefix word starts
+  let acOracleTagNames = null;  // cached from background
+  let acArtTagNames = null;     // cached from background
+  let acObserver = null;        // MutationObserver for detecting #deckbox-search
+  let acBlurTimer = null;       // delay for blur dismissal
+
   // ─── Bootstrap ──────────────────────────────────────────────────────
   init();
 
@@ -41,6 +55,9 @@
 
     // Re-init when the SPA navigates to a different deck.
     watchNavigation();
+
+    // Set up search box autocomplete for tag names.
+    setupAutocomplete();
   }
 
   function cleanup() {
@@ -50,6 +67,7 @@
     cardMap.clear();
     tagCache.clear();
     currentCard = null;
+    detachAutocomplete();
 
     // Remove stale page_hook data from a previous deck so the next
     // init cycle doesn't pick up old data.
@@ -739,6 +757,295 @@
         init();
       }
     }, 1000);
+  }
+
+  // ─── Autocomplete ─────────────────────────────────────────────────
+  // Provides tag name suggestions when typing otag:/oracletag:/function:
+  // or art:/atag:/arttag: in the #deckbox-search input.
+
+  const ORACLE_PREFIXES = ['otag:', 'oracletag:', 'function:'];
+  const ART_PREFIXES = ['art:', 'atag:', 'arttag:'];
+  const ALL_PREFIXES = [...ORACLE_PREFIXES, ...ART_PREFIXES];
+  const MAX_VISIBLE = 10;
+
+  function setupAutocomplete() {
+    acInput = document.getElementById('deckbox-search');
+    if (acInput) {
+      attachAutocomplete(acInput);
+    } else {
+      // Watch for it to appear (React may render it later).
+      acObserver = new MutationObserver(() => {
+        const el = document.getElementById('deckbox-search');
+        if (el) {
+          acObserver.disconnect();
+          acObserver = null;
+          acInput = el;
+          attachAutocomplete(el);
+        }
+      });
+      acObserver.observe(document.body, { childList: true, subtree: true });
+    }
+  }
+
+  function attachAutocomplete(input) {
+    log('Autocomplete attached to #deckbox-search');
+    input.addEventListener('input', onAcInput);
+    input.addEventListener('keydown', onAcKeydown);
+    input.addEventListener('blur', onAcBlur);
+    input.addEventListener('focus', onAcFocus);
+  }
+
+  function detachAutocomplete() {
+    if (acInput) {
+      acInput.removeEventListener('input', onAcInput);
+      acInput.removeEventListener('keydown', onAcKeydown);
+      acInput.removeEventListener('blur', onAcBlur);
+      acInput.removeEventListener('focus', onAcFocus);
+      acInput = null;
+    }
+    if (acObserver) {
+      acObserver.disconnect();
+      acObserver = null;
+    }
+    closeAcDropdown();
+  }
+
+  function onAcFocus() {
+    // Re-evaluate on focus in case the input already has a prefix.
+    onAcInput();
+  }
+
+  function onAcInput() {
+    if (!acInput) return;
+    const val = acInput.value;
+    const cursor = acInput.selectionStart ?? val.length;
+
+    // Find the current word at cursor: walk back to a space or start.
+    let wordStart = cursor;
+    while (wordStart > 0 && val[wordStart - 1] !== ' ') {
+      wordStart--;
+    }
+    const word = val.substring(wordStart, cursor).toLowerCase();
+
+    // Check if the word starts with a known prefix.
+    let matchedPrefix = null;
+    for (const p of ALL_PREFIXES) {
+      if (word.startsWith(p)) {
+        matchedPrefix = p;
+        break;
+      }
+    }
+
+    if (!matchedPrefix) {
+      closeAcDropdown();
+      return;
+    }
+
+    const partial = word.substring(matchedPrefix.length);
+    acCurrentPrefix = matchedPrefix;
+    acWordStart = wordStart;
+
+    // Determine which tag list to use.
+    const isOracle = ORACLE_PREFIXES.includes(matchedPrefix);
+
+    // Ensure we have tag names.
+    if (isOracle && acOracleTagNames) {
+      showFilteredTags(acOracleTagNames, partial);
+    } else if (!isOracle && acArtTagNames) {
+      showFilteredTags(acArtTagNames, partial);
+    } else {
+      // Need to fetch tag names from background.
+      fetchTagNames().then(() => {
+        // Re-check — the input may have changed while we were fetching.
+        if (acInput && acCurrentPrefix === matchedPrefix) {
+          const list = isOracle ? acOracleTagNames : acArtTagNames;
+          if (list) showFilteredTags(list, partial);
+        }
+      });
+    }
+  }
+
+  function fetchTagNames() {
+    return new Promise((resolve) => {
+      chrome.runtime.sendMessage({ type: 'getTagNames' }, (resp) => {
+        if (chrome.runtime.lastError) {
+          warn('getTagNames failed:', chrome.runtime.lastError.message);
+          return resolve();
+        }
+        if (resp?.ok) {
+          acOracleTagNames = resp.oracleTagNames || [];
+          acArtTagNames = resp.artTagNames || [];
+          log('Tag names loaded:', acOracleTagNames.length, 'oracle,', acArtTagNames.length, 'art');
+        }
+        resolve();
+      });
+    });
+  }
+
+  function showFilteredTags(tagList, partial) {
+    // Require at least 1 character after the prefix to avoid rendering
+    // thousands of items when the user just typed "otag:" or "art:".
+    if (!partial) {
+      closeAcDropdown();
+      return;
+    }
+
+    // Match any dash-delimited word prefix within the tag name.
+    // e.g. "count" matches "counters-matter" (word "counters") and
+    // "add-counters" (word "counters") but not "accounting".
+    const lowerPartial = partial.toLowerCase();
+    acCurrentPartial = lowerPartial;
+    acFilteredTags = tagList.filter(t => {
+      const words = t.toLowerCase().split('-');
+      return words.some(w => w.startsWith(lowerPartial));
+    });
+
+    if (acFilteredTags.length === 0) {
+      closeAcDropdown();
+      return;
+    }
+
+    renderAcDropdown();
+  }
+
+  function renderAcDropdown() {
+    if (!acInput) return;
+
+    if (!acDropdown) {
+      acDropdown = document.createElement('div');
+      acDropdown.className = 'moxtags-autocomplete';
+      // Prevent dropdown clicks from blurring the input.
+      acDropdown.addEventListener('mousedown', (e) => e.preventDefault());
+      document.body.appendChild(acDropdown);
+    }
+
+    // Position below the search box.
+    const rect = acInput.getBoundingClientRect();
+    acDropdown.style.left = rect.left + window.scrollX + 'px';
+    acDropdown.style.top = rect.bottom + window.scrollY + 2 + 'px';
+    acDropdown.style.minWidth = rect.width + 'px';
+
+    // Cap rendered items for short partials to avoid DOM bloat; remove cap at 3+ chars.
+    const renderCount = acCurrentPartial.length >= 3
+      ? acFilteredTags.length
+      : Math.min(acFilteredTags.length, MAX_VISIBLE * 5);
+    acDropdown.innerHTML = '';
+    acItems = [];
+    acHighlightIdx = 0;
+
+    for (let i = 0; i < renderCount; i++) {
+      const tag = acFilteredTags[i];
+      const item = document.createElement('div');
+      item.className = 'moxtags-autocomplete-item';
+      item.appendChild(buildHighlightedTag(tag, acCurrentPartial));
+      item.dataset.index = i;
+
+      item.addEventListener('click', () => selectAcItem(i));
+      item.addEventListener('mouseenter', () => highlightAcItem(i));
+
+      acDropdown.appendChild(item);
+      acItems.push(item);
+    }
+
+    highlightAcItem(0);
+    acDropdown.style.display = '';
+  }
+
+  /**
+   * Build a document fragment for a tag name with the matched portion
+   * of each matching dash-delimited word wrapped in <b>.
+   */
+  function buildHighlightedTag(tag, partial) {
+    const frag = document.createDocumentFragment();
+    const parts = tag.split('-');
+    const pLen = partial.length;
+
+    for (let i = 0; i < parts.length; i++) {
+      if (i > 0) frag.appendChild(document.createTextNode('-'));
+      const word = parts[i];
+      if (word.toLowerCase().startsWith(partial)) {
+        const b = document.createElement('b');
+        b.textContent = word.substring(0, pLen);
+        frag.appendChild(b);
+        frag.appendChild(document.createTextNode(word.substring(pLen)));
+      } else {
+        frag.appendChild(document.createTextNode(word));
+      }
+    }
+    return frag;
+  }
+
+  function highlightAcItem(idx) {
+    if (idx < 0 || idx >= acItems.length) return;
+    if (acHighlightIdx >= 0 && acHighlightIdx < acItems.length) {
+      acItems[acHighlightIdx].classList.remove('highlighted');
+    }
+    acHighlightIdx = idx;
+    acItems[idx].classList.add('highlighted');
+    // Scroll into view if needed.
+    acItems[idx].scrollIntoView({ block: 'nearest' });
+  }
+
+  function selectAcItem(idx) {
+    if (idx < 0 || idx >= acFilteredTags.length) return;
+    if (!acInput) return;
+
+    const tag = acFilteredTags[idx];
+    const val = acInput.value;
+    const cursor = acInput.selectionStart ?? val.length;
+
+    // Replace from wordStart to cursor with prefix + tag + trailing space.
+    const before = val.substring(0, acWordStart);
+    const after = val.substring(cursor);
+    const insertion = acCurrentPrefix + tag + ' ';
+    acInput.value = before + insertion + after;
+
+    // Place cursor after the inserted text.
+    const newCursor = acWordStart + insertion.length;
+    acInput.setSelectionRange(newCursor, newCursor);
+
+    // Fire input event so Moxfield's React picks up the change.
+    acInput.dispatchEvent(new Event('input', { bubbles: true }));
+
+    closeAcDropdown();
+    acInput.focus();
+  }
+
+  function closeAcDropdown() {
+    if (acDropdown) {
+      acDropdown.remove();
+      acDropdown = null;
+    }
+    acItems = [];
+    acHighlightIdx = -1;
+    acFilteredTags = [];
+  }
+
+  function onAcKeydown(e) {
+    if (!acDropdown || acItems.length === 0) return;
+
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      const next = (acHighlightIdx + 1) % acItems.length;
+      highlightAcItem(next);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      const prev = (acHighlightIdx - 1 + acItems.length) % acItems.length;
+      highlightAcItem(prev);
+    } else if (e.key === 'Tab') {
+      e.preventDefault();
+      selectAcItem(acHighlightIdx);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      closeAcDropdown();
+    }
+  }
+
+  function onAcBlur() {
+    // Delay to allow click events on dropdown items to fire first.
+    acBlurTimer = setTimeout(() => {
+      closeAcDropdown();
+    }, 200);
   }
 
   // ─── Logging helpers ──────────────────────────────────────────────

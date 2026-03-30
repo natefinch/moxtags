@@ -13,6 +13,10 @@ let oracleIndex = null;       // oracle_id → tags
 let illustrationIndex = null; // illustration_id → tags
 let indexReady = null;         // Promise that resolves when indexes are built
 
+// Sorted unique tag name lists for autocomplete.
+let oracleTagNames = null;       // string[]
+let artTagNames = null;          // string[]
+
 // State for the popup UI.
 let refreshing = false;
 let lastRefreshError = null;
@@ -67,6 +71,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         lastRefreshError = err.message;
         sendResponse({ ok: false, error: err.message });
       });
+    return true;
+  }
+  if (msg.type === 'getTagNames') {
+    ensureIndexes()
+      .then(() => sendResponse({ ok: true, oracleTagNames: oracleTagNames || [], artTagNames: artTagNames || [] }))
+      .catch(err => sendResponse({ ok: false, error: err.message }));
     return true;
   }
 });
@@ -222,11 +232,16 @@ async function ensureIndexes() {
   if (oracleIndex && illustrationIndex) return;
 
   // Try loading from storage.
-  const stored = await chrome.storage.local.get(['oracleIndex', 'illustrationIndex', 'tagDataTimestamp']);
+  const stored = await chrome.storage.local.get([
+    'oracleIndex', 'illustrationIndex', 'tagDataTimestamp',
+    'oracleTagNames', 'artTagNames',
+  ]);
 
   if (stored.oracleIndex && stored.illustrationIndex) {
     oracleIndex = new Map(stored.oracleIndex);
     illustrationIndex = new Map(stored.illustrationIndex);
+    oracleTagNames = stored.oracleTagNames || null;
+    artTagNames = stored.artTagNames || null;
     console.log('[MoxTags BG] Indexes loaded from storage.',
       oracleIndex.size, 'oracle IDs,', illustrationIndex.size, 'illustration IDs');
 
@@ -271,13 +286,20 @@ async function refreshTagData() {
     oracleIndex = buildReverseIndex(oracleData.data, 'oracle_ids');
     illustrationIndex = buildReverseIndex(illustrationData.data, 'illustration_ids');
 
+    // Build sorted unique tag name lists for autocomplete.
+    oracleTagNames = [...new Set(oracleData.data.map(t => t.label))].sort();
+    artTagNames = [...new Set(illustrationData.data.map(t => t.label))].sort();
+
     console.log('[MoxTags BG] Indexes built.',
-      oracleIndex.size, 'oracle IDs,', illustrationIndex.size, 'illustration IDs');
+      oracleIndex.size, 'oracle IDs,', illustrationIndex.size, 'illustration IDs,',
+      oracleTagNames.length, 'oracle tag names,', artTagNames.length, 'art tag names');
 
     // Persist to storage as arrays of [key, value] entries.
     await chrome.storage.local.set({
       oracleIndex: [...oracleIndex.entries()],
       illustrationIndex: [...illustrationIndex.entries()],
+      oracleTagNames,
+      artTagNames,
       tagDataTimestamp: Date.now(),
     });
 
