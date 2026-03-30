@@ -94,7 +94,7 @@ if [[ "$BRANCH" != "main" ]]; then
   exit 1
 fi
 
-Check for uncommitted changes
+# Check for uncommitted changes
 if ! git diff --quiet || ! git diff --cached --quiet; then
   echo "Error: you have uncommitted changes. Please commit or stash them first."
   exit 1
