@@ -206,7 +206,7 @@
   padding: 5px 12px;
   font-size: 13px;
   line-height: 1.4;
-  color: rgba(255, 255, 255, 0.85);
+  color: rgba(255, 255, 255, 0.45);
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
@@ -214,7 +214,16 @@
   user-select: none;
 }
 
+.moxtags-autocomplete-item b {
+  color: rgba(255, 255, 255, 0.9);
+  font-weight: 600;
+}
+
 .moxtags-autocomplete-item.highlighted {
   background-color: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.moxtags-autocomplete-item.highlighted b {
   color: #fff;
 }
