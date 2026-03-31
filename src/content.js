@@ -672,13 +672,13 @@ import { ORACLE_PREFIXES, MENU_KEYWORDS, MAX_VISIBLE } from './shared/constants.
     if (!el || el.nodeType !== Node.ELEMENT_NODE) return false;
     const tag = el.tagName?.toLowerCase();
     if (tag !== 'dialog' && el.getAttribute?.('role') !== 'dialog') return false;
-    if (el.querySelector('.moxtags-dialog-tags')) return false;
+    if (el.querySelector('.moxtags-dialog-group')) return false;
     const text = el.textContent || '';
     return text.includes('Change Tags for') && text.includes('Custom Tags');
   }
 
   async function injectTagsIntoDialog(dialog) {
-    if (dialog.querySelector('.moxtags-dialog-tags')) return;
+    if (dialog.querySelector('.moxtags-dialog-group')) return;
 
     // Extract card name from the dialog heading.
     const heading = dialog.querySelector('h1, h2, h3, h4, h5, h6');
@@ -721,7 +721,10 @@ import { ORACLE_PREFIXES, MENU_KEYWORDS, MAX_VISIBLE } from './shared/constants.
       return;
     }
 
-    // Create container.
+    // Create outer wrapper with a distinct background.
+    const wrapper = document.createElement('div');
+    wrapper.className = 'moxtags-dialog-group';
+
     const container = document.createElement('div');
     container.className = 'moxtags-dialog-tags';
 
@@ -730,7 +733,14 @@ import { ORACLE_PREFIXES, MENU_KEYWORDS, MAX_VISIBLE } from './shared/constants.
     loader.textContent = 'Loading Scryfall tags…';
     container.appendChild(loader);
 
-    insertAfter.after(container);
+    wrapper.appendChild(container);
+    insertAfter.after(wrapper);
+
+    // Indent only the first Moxfield Quick Tags dropdown to align with ours.
+    const moxDropdowns = dialog.querySelectorAll('.dropdown.d-inline-block:not(.moxtags-dialog-dropdown)');
+    if (moxDropdowns.length > 0) {
+      moxDropdowns[0].style.marginLeft = '10px';
+    }
 
     // Fetch tags for this card.
     const { set, cn } = cardInfo;
@@ -753,15 +763,21 @@ import { ORACLE_PREFIXES, MENU_KEYWORDS, MAX_VISIBLE } from './shared/constants.
         return;
       }
 
+      // Shared state for the tag prefix (deck vs global).
+      const prefixState = { prefix: '#' };
+
       if (tags.artTags.length > 0) {
-        container.appendChild(buildTagDropdown('Art Tags', tags.artTags, customTagsInput));
+        container.appendChild(buildTagDropdown('Art Tags', tags.artTags, customTagsInput, prefixState));
       }
       if (tags.cardTags.length > 0) {
-        container.appendChild(buildTagDropdown('Card Tags', tags.cardTags, customTagsInput));
+        container.appendChild(buildTagDropdown('Card Tags', tags.cardTags, customTagsInput, prefixState));
       }
 
+      // Radio buttons for deck vs global tag scope.
+      wrapper.appendChild(buildScopeRadios(prefixState));
+
       // After rendering, equalize widths across all 4 dropdowns.
-      equalizeDropdownWidths(dialog, container);
+      equalizeDropdownWidths(dialog);
     } catch (err) {
       error('Change Tags dialog: tag fetch failed:', err);
       loader.textContent = 'Failed to load Scryfall tags';
@@ -769,7 +785,7 @@ import { ORACLE_PREFIXES, MENU_KEYWORDS, MAX_VISIBLE } from './shared/constants.
     }
   }
 
-  function buildTagDropdown(label, tags, customTagsInput) {
+  function buildTagDropdown(label, tags, customTagsInput, prefixState) {
     const wrapper = document.createElement('div');
     wrapper.className = 'dropdown d-inline-block moxtags-dialog-dropdown';
 
@@ -792,7 +808,7 @@ import { ORACLE_PREFIXES, MENU_KEYWORDS, MAX_VISIBLE } from './shared/constants.
 
     select.addEventListener('change', () => {
       if (!select.value) return;
-      addTagToCustomInput(customTagsInput, select.value);
+      addTagToCustomInput(customTagsInput, select.value, prefixState.prefix);
       select.selectedIndex = 0;
     });
 
@@ -800,10 +816,40 @@ import { ORACLE_PREFIXES, MENU_KEYWORDS, MAX_VISIBLE } from './shared/constants.
     return wrapper;
   }
 
-  function addTagToCustomInput(input, tagName) {
-    // "some-tag-name" → "#Some Tag Name"
+  function buildScopeRadios(prefixState) {
+    const container = document.createElement('div');
+    container.className = 'moxtags-dialog-scope';
+
+    const options = [
+      { label: 'Add as Deck Tags', prefix: '#' },
+      { label: 'Add as Global Tags', prefix: '#!' },
+    ];
+
+    for (const opt of options) {
+      const lbl = document.createElement('label');
+      lbl.className = 'moxtags-dialog-radio-label';
+
+      const radio = document.createElement('input');
+      radio.type = 'radio';
+      radio.name = 'moxtags-tag-scope';
+      radio.value = opt.prefix;
+      radio.checked = opt.prefix === prefixState.prefix;
+      radio.addEventListener('change', () => {
+        prefixState.prefix = opt.prefix;
+      });
+
+      lbl.appendChild(radio);
+      lbl.appendChild(document.createTextNode(' ' + opt.label));
+      container.appendChild(lbl);
+    }
+
+    return container;
+  }
+
+  function addTagToCustomInput(input, tagName, prefix) {
+    // "some-tag-name" → "Some Tag Name"
     const display = tagName.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-    const hashTag = '#' + display;
+    const hashTag = prefix + display;
     const currentVal = input.value.trim();
 
     // Don't add duplicates.
@@ -816,21 +862,12 @@ import { ORACLE_PREFIXES, MENU_KEYWORDS, MAX_VISIBLE } from './shared/constants.
     input.dispatchEvent(new Event('change', { bubbles: true }));
   }
 
-  function equalizeDropdownWidths(dialog, container) {
-    requestAnimationFrame(() => {
-      // Collect Moxfield's Quick Tags buttons and our selects.
-      const moxButtons = dialog.querySelectorAll('.dropdown > button.btn-secondary');
-      const ourSelects = container.querySelectorAll('.moxtags-dialog-select');
-      const all = [...moxButtons, ...ourSelects];
-      if (all.length === 0) return;
-
-      // Reset any previous fixed width so natural widths are measured.
-      for (const el of all) el.style.width = '';
-
-      const maxWidth = Math.max(...all.map(el => el.getBoundingClientRect().width));
-      const px = Math.ceil(maxWidth) + 'px';
-      for (const el of all) el.style.width = px;
-    });
+  function equalizeDropdownWidths(dialog) {
+    const moxButtons = dialog.querySelectorAll(
+      '.dropdown:not(.moxtags-dialog-dropdown) > button.btn-secondary'
+    );
+    const ourSelects = dialog.querySelectorAll('.moxtags-dialog-select');
+    for (const el of [...moxButtons, ...ourSelects]) el.style.width = '158px';
   }
 
   // ─── Background communication ──────────────────────────────────────

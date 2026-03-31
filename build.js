@@ -56,9 +56,8 @@ async function buildBrowser(browser) {
 }
 
 async function main() {
-  const targets = process.argv[2]
-    ? [process.argv[2]]
-    : BROWSERS;
+  const args = process.argv.slice(2).filter(a => !a.startsWith('-'));
+  const targets = args.length > 0 ? args : BROWSERS;
 
   for (const browser of targets) {
     if (!BROWSERS.includes(browser)) {
@@ -69,7 +68,30 @@ async function main() {
   }
 }
 
-main().catch(err => {
+await main().catch(err => {
   console.error(err);
   process.exit(1);
 });
+
+// ─── Watch mode ─────────────────────────────────────────────────────
+if (process.argv.includes('--watch')) {
+  const { watch } = await import('fs');
+  const dirs = [join(ROOT, 'src'), join(ROOT, 'manifests'), join(ROOT, 'icons')];
+  let timer = null;
+
+  function rebuild() {
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+      try {
+        for (const browser of BROWSERS) await buildBrowser(browser);
+      } catch (e) {
+        console.error('Build error:', e.message);
+      }
+    }, 100);
+  }
+
+  for (const dir of dirs) {
+    watch(dir, { recursive: true }, rebuild);
+  }
+  console.log('\n👀 Watching for changes… (Ctrl+C to stop)');
+}

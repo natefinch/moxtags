@@ -8,6 +8,7 @@
     "build": "node build.js",
     "build:chrome": "node build.js chrome",
     "build:firefox": "node build.js firefox",
+    "watch": "node build.js --watch",
     "test": "node --test tests/*.test.js"
   },
   "devDependencies": {
