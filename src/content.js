@@ -789,30 +789,41 @@ import { ORACLE_PREFIXES, MENU_KEYWORDS, MAX_VISIBLE } from './shared/constants.
     const wrapper = document.createElement('div');
     wrapper.className = 'dropdown d-inline-block moxtags-dialog-dropdown';
 
-    const select = document.createElement('select');
-    select.className = 'btn btn-secondary moxtags-dialog-select';
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-secondary dropdown-toggle moxtags-dialog-select';
+    btn.type = 'button';
+    btn.textContent = label;
 
-    const placeholder = document.createElement('option');
-    placeholder.value = '';
-    placeholder.textContent = label;
-    placeholder.disabled = true;
-    placeholder.selected = true;
-    select.appendChild(placeholder);
+    const menu = document.createElement('div');
+    menu.className = 'dropdown-menu dropdown-menu-scrollable moxtags-dialog-menu';
 
     for (const tag of tags) {
-      const option = document.createElement('option');
-      option.value = tag.name;
-      option.textContent = tag.name;
-      select.appendChild(option);
+      const item = document.createElement('button');
+      item.className = 'dropdown-item';
+      item.type = 'button';
+      item.textContent = tag.name;
+      item.addEventListener('click', (e) => {
+        e.stopPropagation();
+        addTagToCustomInput(customTagsInput, tag.name, prefixState.prefix);
+        menu.classList.remove('show');
+      });
+      menu.appendChild(item);
     }
 
-    select.addEventListener('change', () => {
-      if (!select.value) return;
-      addTagToCustomInput(customTagsInput, select.value, prefixState.prefix);
-      select.selectedIndex = 0;
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      // Close any other open moxtags menus first.
+      document.querySelectorAll('.moxtags-dialog-menu.show').forEach(m => {
+        if (m !== menu) m.classList.remove('show');
+      });
+      menu.classList.toggle('show');
     });
 
-    wrapper.appendChild(select);
+    // Close when clicking outside.
+    document.addEventListener('click', () => menu.classList.remove('show'));
+
+    wrapper.appendChild(btn);
+    wrapper.appendChild(menu);
     return wrapper;
   }
 

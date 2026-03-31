@@ -248,6 +248,23 @@
   gap: 7px;
 }
 
+.moxtags-dialog-select:focus {
+  outline: none;
+  box-shadow: none;
+}
+
+.moxtags-dialog-menu {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 100001;
+}
+
+.moxtags-dialog-menu.show {
+  display: block;
+}
+
 .moxtags-dialog-loading {
   font-size: 13px;
   color: rgba(255, 255, 255, 0.4);
