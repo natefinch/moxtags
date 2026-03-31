@@ -47,8 +47,12 @@ export function filterAndSortTags(tagList, partial) {
   const lowerPartial = partial.toLowerCase();
 
   const filtered = tagList.filter(t => {
-    const words = t.toLowerCase().split('-');
-    return words.some(w => w.startsWith(lowerPartial));
+    const lower = t.toLowerCase();
+    if (lower.startsWith(lowerPartial)) return true;
+    for (let i = lower.indexOf('-'); i !== -1; i = lower.indexOf('-', i + 1)) {
+      if (lower.startsWith(lowerPartial, i + 1)) return true;
+    }
+    return false;
   });
 
   filtered.sort((a, b) => {
@@ -84,21 +88,40 @@ export function renderCount(filteredLength, partialLength) {
  * @returns {{ text: string, bold: boolean }[]}
  */
 export function highlightTag(tag, partial) {
-  const parts = tag.split('-');
+  const lowerTag = tag.toLowerCase();
   const pLen = partial.length;
-  const segments = [];
 
-  for (let i = 0; i < parts.length; i++) {
-    if (i > 0) segments.push({ text: '-', bold: false });
-    const word = parts[i];
-    if (word.toLowerCase().startsWith(partial)) {
-      segments.push({ text: word.substring(0, pLen), bold: true });
-      if (word.length > pLen) {
-        segments.push({ text: word.substring(pLen), bold: false });
-      }
-    } else {
-      segments.push({ text: word, bold: false });
+  // Find all word-boundary positions where partial matches
+  const matchPositions = [];
+  const wordStarts = [0];
+  for (let i = 0; i < lowerTag.length; i++) {
+    if (lowerTag[i] === '-') wordStarts.push(i + 1);
+  }
+  for (const pos of wordStarts) {
+    if (lowerTag.startsWith(partial, pos)) {
+      matchPositions.push(pos);
     }
+  }
+
+  if (matchPositions.length === 0) {
+    return [{ text: tag, bold: false }];
+  }
+
+  const segments = [];
+  let cursor = 0;
+  for (const pos of matchPositions) {
+    if (pos > cursor) {
+      segments.push({ text: tag.substring(cursor, pos), bold: false });
+    }
+    const boldStart = Math.max(pos, cursor);
+    const boldEnd = pos + pLen;
+    if (boldEnd > boldStart) {
+      segments.push({ text: tag.substring(boldStart, boldEnd), bold: true });
+    }
+    cursor = boldEnd;
+  }
+  if (cursor < tag.length) {
+    segments.push({ text: tag.substring(cursor), bold: false });
   }
   return segments;
 }

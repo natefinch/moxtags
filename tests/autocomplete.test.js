@@ -78,6 +78,22 @@ describe('filterAndSortTags – word-prefix matching', () => {
     const result = filterAndSortTags(tags, 'draw');
     assert.deepEqual(result, ['draw-first', 'draw-second', 'a-draw', 'z-draw']);
   });
+
+  it('matches a hyphenated partial spanning words', () => {
+    const result = filterAndSortTags(SAMPLE_TAGS, 'add-c');
+    assert.deepEqual(result, ['add-counters', 'add-counters-twice']);
+  });
+
+  it('matches a hyphenated partial at a later word boundary', () => {
+    const tags = ['very-add-counters', 'add-counters', 'other-tag'];
+    const result = filterAndSortTags(tags, 'add-c');
+    assert.deepEqual(result, ['add-counters', 'very-add-counters']);
+  });
+
+  it('matches a partial ending with a dash', () => {
+    const result = filterAndSortTags(SAMPLE_TAGS, 'add-');
+    assert.deepEqual(result, ['add-counters', 'add-counters-twice']);
+  });
 });
 
 // ── Render count cap ─────────────────────────────────────────────────
@@ -163,16 +179,14 @@ describe('highlightTag – bold segments', () => {
     const segs = highlightTag('add-counters', 'add');
     assert.deepEqual(segs, [
       { text: 'add', bold: true },
-      { text: '-', bold: false },
-      { text: 'counters', bold: false },
+      { text: '-counters', bold: false },
     ]);
   });
 
   it('highlights a matching word in the middle', () => {
     const segs = highlightTag('add-counters', 'count');
     assert.deepEqual(segs, [
-      { text: 'add', bold: false },
-      { text: '-', bold: false },
+      { text: 'add-', bold: false },
       { text: 'count', bold: true },
       { text: 'ers', bold: false },
     ]);
@@ -182,11 +196,9 @@ describe('highlightTag – bold segments', () => {
     const segs = highlightTag('add-also-another', 'a');
     assert.deepEqual(segs, [
       { text: 'a', bold: true },
-      { text: 'dd', bold: false },
-      { text: '-', bold: false },
+      { text: 'dd-', bold: false },
       { text: 'a', bold: true },
-      { text: 'lso', bold: false },
-      { text: '-', bold: false },
+      { text: 'lso-', bold: false },
       { text: 'a', bold: true },
       { text: 'nother', bold: false },
     ]);
@@ -210,9 +222,25 @@ describe('highlightTag – bold segments', () => {
   it('does not highlight non-matching words', () => {
     const segs = highlightTag('card-draw', 'draw');
     assert.deepEqual(segs, [
-      { text: 'card', bold: false },
-      { text: '-', bold: false },
+      { text: 'card-', bold: false },
       { text: 'draw', bold: true },
+    ]);
+  });
+
+  it('highlights a hyphenated partial spanning words', () => {
+    const segs = highlightTag('add-counters', 'add-c');
+    assert.deepEqual(segs, [
+      { text: 'add-c', bold: true },
+      { text: 'ounters', bold: false },
+    ]);
+  });
+
+  it('highlights a hyphenated partial matching a later word boundary', () => {
+    const segs = highlightTag('very-add-counters', 'add-c');
+    assert.deepEqual(segs, [
+      { text: 'very-', bold: false },
+      { text: 'add-c', bold: true },
+      { text: 'ounters', bold: false },
     ]);
   });
 });
