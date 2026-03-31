@@ -233,3 +233,24 @@
 .moxtags-autocomplete-item.highlighted b {
   color: #fff;
 }
+
+/* ── Change Tags dialog tag dropdowns ────────────────────────────── */
+.moxtags-dialog-tags {
+  margin-top: 8px;
+  display: inline-flex;
+  gap: 7px;
+}
+
+.moxtags-dialog-loading {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.4);
+  font-style: italic;
+  padding: 4px 0;
+}
+
+.moxtags-dialog-empty {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.3);
+  font-style: italic;
+  padding: 4px 0;
+}

@@ -290,10 +290,12 @@ import { ORACLE_PREFIXES, MENU_KEYWORDS, MAX_VISIBLE } from './shared/constants.
       for (const node of mut.addedNodes) {
         if (node.nodeType !== Node.ELEMENT_NODE) continue;
         scanForMenu(node);
+        scanForDialog(node);
       }
       // Also check attribute changes – menus may be shown/hidden via style.
       if (mut.type === 'attributes' && mut.target?.nodeType === Node.ELEMENT_NODE) {
         scanForMenu(mut.target);
+        scanForDialog(mut.target);
       }
     }
   }
@@ -633,6 +635,199 @@ import { ORACLE_PREFIXES, MENU_KEYWORDS, MAX_VISIBLE } from './shared/constants.
       if (overflow > 0) {
         submenu.style.top = -overflow + 'px';
       }
+    });
+  }
+
+  // ─── Change Tags dialog injection ──────────────────────────────────
+  // When the user opens Moxfield's "Change Tags" dialog (Shift+Click),
+  // inject <select> dropdowns for this card's Scryfall art and card tags.
+
+  function scanForDialog(el) {
+    const dialog = findChangeTagsDialog(el);
+    if (dialog) {
+      injectTagsIntoDialog(dialog);
+      return;
+    }
+    // Walk up in case the mutation was inside a dialog.
+    let parent = el.parentElement;
+    for (let i = 0; i < 10 && parent && parent !== document.body; i++) {
+      if (isChangeTagsDialog(parent)) {
+        injectTagsIntoDialog(parent);
+        return;
+      }
+      parent = parent.parentElement;
+    }
+  }
+
+  function findChangeTagsDialog(root) {
+    if (isChangeTagsDialog(root)) return root;
+    const dialogs = root.querySelectorAll?.('dialog, [role="dialog"]') || [];
+    for (const d of dialogs) {
+      if (isChangeTagsDialog(d)) return d;
+    }
+    return null;
+  }
+
+  function isChangeTagsDialog(el) {
+    if (!el || el.nodeType !== Node.ELEMENT_NODE) return false;
+    const tag = el.tagName?.toLowerCase();
+    if (tag !== 'dialog' && el.getAttribute?.('role') !== 'dialog') return false;
+    if (el.querySelector('.moxtags-dialog-tags')) return false;
+    const text = el.textContent || '';
+    return text.includes('Change Tags for') && text.includes('Custom Tags');
+  }
+
+  async function injectTagsIntoDialog(dialog) {
+    if (dialog.querySelector('.moxtags-dialog-tags')) return;
+
+    // Extract card name from the dialog heading.
+    const heading = dialog.querySelector('h1, h2, h3, h4, h5, h6');
+    const headingText = heading?.textContent?.trim() || '';
+    const match = headingText.match(/^Change Tags for (.+)$/);
+    const cardName = match?.[1];
+
+    if (!cardName) {
+      log('Change Tags dialog: could not extract card name');
+      return;
+    }
+
+    // Look up card in the deck map (prefer heading name, fall back to currentCard).
+    const cardInfo = cardMap.get(cardName.toLowerCase()) || currentCard;
+    if (!cardInfo) {
+      log('Change Tags dialog: card not found in deck:', cardName);
+      return;
+    }
+
+    // Find the Custom Tags input.
+    const customTagsInput = dialog.querySelector('input[type="search"], input[type="text"], input');
+    if (!customTagsInput) {
+      log('Change Tags dialog: could not find Custom Tags input');
+      return;
+    }
+
+    // Find insertion point – after "Recent Deck Tags" or "Recent Global Tags" button.
+    const buttons = dialog.querySelectorAll('button');
+    let insertAfter = null;
+    for (const btn of buttons) {
+      const t = btn.textContent?.trim();
+      if (t?.startsWith('Recent Deck Tags') || t?.startsWith('Recent Global Tags')) {
+        // Walk up to the wrapping div.dropdown so we insert after it,
+        // not inside it.
+        insertAfter = btn.closest('.dropdown') || btn;
+      }
+    }
+    if (!insertAfter) {
+      log('Change Tags dialog: could not find insertion point');
+      return;
+    }
+
+    // Create container.
+    const container = document.createElement('div');
+    container.className = 'moxtags-dialog-tags';
+
+    const loader = document.createElement('div');
+    loader.className = 'moxtags-dialog-loading';
+    loader.textContent = 'Loading Scryfall tags…';
+    container.appendChild(loader);
+
+    insertAfter.after(container);
+
+    // Fetch tags for this card.
+    const { set, cn } = cardInfo;
+    const cacheKey = `${set}/${cn}`;
+
+    try {
+      let tags = tagCache.get(cacheKey);
+      if (!tags) {
+        tags = await loadTags(set, cn);
+        tagCache.set(cacheKey, tags);
+      }
+
+      loader.remove();
+
+      if (tags.artTags.length === 0 && tags.cardTags.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'moxtags-dialog-empty';
+        empty.textContent = 'No Scryfall tags found';
+        container.appendChild(empty);
+        return;
+      }
+
+      if (tags.artTags.length > 0) {
+        container.appendChild(buildTagDropdown('Art Tags', tags.artTags, customTagsInput));
+      }
+      if (tags.cardTags.length > 0) {
+        container.appendChild(buildTagDropdown('Card Tags', tags.cardTags, customTagsInput));
+      }
+
+      // After rendering, equalize widths across all 4 dropdowns.
+      equalizeDropdownWidths(dialog, container);
+    } catch (err) {
+      error('Change Tags dialog: tag fetch failed:', err);
+      loader.textContent = 'Failed to load Scryfall tags';
+      loader.classList.add('moxtags-error');
+    }
+  }
+
+  function buildTagDropdown(label, tags, customTagsInput) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'dropdown d-inline-block moxtags-dialog-dropdown';
+
+    const select = document.createElement('select');
+    select.className = 'btn btn-secondary moxtags-dialog-select';
+
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = label;
+    placeholder.disabled = true;
+    placeholder.selected = true;
+    select.appendChild(placeholder);
+
+    for (const tag of tags) {
+      const option = document.createElement('option');
+      option.value = tag.name;
+      option.textContent = tag.name;
+      select.appendChild(option);
+    }
+
+    select.addEventListener('change', () => {
+      if (!select.value) return;
+      addTagToCustomInput(customTagsInput, select.value);
+      select.selectedIndex = 0;
+    });
+
+    wrapper.appendChild(select);
+    return wrapper;
+  }
+
+  function addTagToCustomInput(input, tagName) {
+    const hashTag = '#' + tagName;
+    const currentVal = input.value.trim();
+
+    // Don't add duplicates.
+    const existing = currentVal.split(',').map(t => t.trim().toLowerCase());
+    if (existing.includes(hashTag.toLowerCase())) return;
+
+    const newVal = currentVal ? currentVal + ', ' + hashTag : hashTag;
+    input.value = newVal;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
+  function equalizeDropdownWidths(dialog, container) {
+    requestAnimationFrame(() => {
+      // Collect Moxfield's Quick Tags buttons and our selects.
+      const moxButtons = dialog.querySelectorAll('.dropdown > button.btn-secondary');
+      const ourSelects = container.querySelectorAll('.moxtags-dialog-select');
+      const all = [...moxButtons, ...ourSelects];
+      if (all.length === 0) return;
+
+      // Reset any previous fixed width so natural widths are measured.
+      for (const el of all) el.style.width = '';
+
+      const maxWidth = Math.max(...all.map(el => el.getBoundingClientRect().width));
+      const px = Math.ceil(maxWidth) + 'px';
+      for (const el of all) el.style.width = px;
     });
   }
 
