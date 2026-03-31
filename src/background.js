@@ -1,12 +1,13 @@
 // MoxTags - Background Service Worker
 // Fetches card tags from Scryfall's cached tag data files and per-card API.
 
-const ORACLE_TAGS_URL = 'https://api.scryfall.com/private/tags/oracle';
-const ILLUSTRATION_TAGS_URL = 'https://api.scryfall.com/private/tags/illustration';
-const SCRYFALL_CARD_API = 'https://api.scryfall.com/cards';
-
-// How often to refresh the tag data (roughly once per day).
-const REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000;
+import { buildReverseIndex, extractTagNames } from './shared/tags.js';
+import {
+  ORACLE_TAGS_URL,
+  ILLUSTRATION_TAGS_URL,
+  SCRYFALL_CARD_API,
+  REFRESH_INTERVAL_MS,
+} from './shared/constants.js';
 
 // In-memory reverse indexes: id → [{label, slug}]
 let oracleIndex = null;       // oracle_id → tags
@@ -287,8 +288,8 @@ async function refreshTagData() {
     illustrationIndex = buildReverseIndex(illustrationData.data, 'illustration_ids');
 
     // Build sorted unique tag name lists for autocomplete.
-    oracleTagNames = [...new Set(oracleData.data.map(t => t.label))].sort();
-    artTagNames = [...new Set(illustrationData.data.map(t => t.label))].sort();
+    oracleTagNames = extractTagNames(oracleData.data);
+    artTagNames = extractTagNames(illustrationData.data);
 
     console.log('[MoxTags BG] Indexes built.',
       oracleIndex.size, 'oracle IDs,', illustrationIndex.size, 'illustration IDs,',
@@ -311,29 +312,6 @@ async function refreshTagData() {
   } finally {
     refreshing = false;
   }
-}
-
-/**
- * Build a Map from id → [{name, slug}] from the tag data array.
- * Each tag has a `label` (used as both name and slug) and an array
- * of IDs under `idKey`.
- */
-function buildReverseIndex(tags, idKey) {
-  const index = new Map();
-  for (const tag of tags) {
-    const entry = { name: tag.label, slug: tag.label };
-    const ids = tag[idKey];
-    if (!ids) continue;
-    for (const id of ids) {
-      let list = index.get(id);
-      if (!list) {
-        list = [];
-        index.set(id, list);
-      }
-      list.push(entry);
-    }
-  }
-  return index;
 }
 
 // ─── Scheduled refresh ──────────────────────────────────────────────

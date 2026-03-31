@@ -1,6 +1,10 @@
 // MoxTags – Content Script
 // Injects Scryfall Tagger art/card tags into Moxfield card context menus.
 
+import { buildCardMap } from './shared/deck.js';
+import { filterAndSortTags, parseInput, renderCount, highlightTag } from './shared/autocomplete.js';
+import { ORACLE_PREFIXES, MENU_KEYWORDS, MAX_VISIBLE } from './shared/constants.js';
+
 (function () {
   'use strict';
 
@@ -180,12 +184,14 @@
         const data = JSON.parse(text);
         const keys = data ? Object.keys(data) : [];
         log('fetchDeckData: parsed response keys:', keys.slice(0, 15).join(', '));
-        if (buildCardMap(data)) {
+        const result = buildCardMap(data, log);
+        if (result) {
+          cardMap = result;
           log('fetchDeckData: Strategy 1 SUCCESS');
           prefetchAllTags();
           return;
         }
-        log('fetchDeckData: buildCardMap returned false for', url);
+        log('fetchDeckData: buildCardMap returned null for', url);
       } catch (e) {
         log('fetchDeckData: Strategy 1 failed for', url, '–', e.message);
       }
@@ -201,104 +207,15 @@
       const keys = Object.keys(data);
       log('fetchDeckData: intercepted data keys:', keys.slice(0, 15).join(', '));
     }
-    if (data && buildCardMap(data)) {
+    const result = data && buildCardMap(data, log);
+    if (result) {
+      cardMap = result;
       log('fetchDeckData: Strategy 2 SUCCESS');
       prefetchAllTags();
       return;
     }
 
     warn('Could not load deck data – tag injection will not work.');
-  }
-
-  /**
-   * Walk every board in the deck JSON and populate `cardMap`.
-   * Handles two API response shapes:
-   *   v2: boards are top-level, entries have a `.card` wrapper
-   *   v3: boards are nested under `data.boards`, entries are flat card objects
-   *       (and also within each board, entries can be wrapped: { card: {...} }
-   *        or the v3 board values can be { quantity, ..., card: {...} } style)
-   * Returns true if at least one card was found.
-   */
-  function buildCardMap(data) {
-    if (!data || typeof data !== 'object') {
-      log('buildCardMap: invalid data –', data === null ? 'null' : typeof data);
-      return false;
-    }
-
-    const boardNames = [
-      'mainboard', 'sideboard', 'commanders', 'companions',
-      'signatureSpells', 'considering', 'attractions',
-      'stickers', 'contraptions', 'planes', 'schemes', 'tokens',
-    ];
-
-    log('buildCardMap: data top-level keys:', Object.keys(data).slice(0, 20).join(', '));
-
-    // Determine where the boards live: under data.boards (v3) or top-level (v2).
-    const boardSource = (data.boards && typeof data.boards === 'object')
-      ? data.boards
-      : data;
-    log('buildCardMap: using', boardSource === data ? 'top-level' : 'data.boards', 'as board source');
-    if (boardSource !== data) {
-      log('buildCardMap: data.boards keys:', Object.keys(boardSource).join(', '));
-    }
-
-    for (const boardName of boardNames) {
-      let board = boardSource[boardName];
-      if (!board || typeof board !== 'object') continue;
-
-      // v3 wraps each board as { count: N, cards: { id: {...}, … } }.
-      // Unwrap to the inner cards object if present.
-      if (board.cards && typeof board.cards === 'object') {
-        log('buildCardMap: board', boardName, 'has .cards wrapper (count:', board.count, ')');
-        board = board.cards;
-      }
-
-      const entries = Object.values(board);
-      if (entries.length === 0) continue;
-      log('buildCardMap: board', boardName, 'has', entries.length, 'entries');
-
-      // Log the first entry's structure for debugging.
-      const first = entries[0];
-      if (first) {
-        const firstKeys = Object.keys(first);
-        log('buildCardMap: first entry in', boardName, '– keys:',
-          firstKeys.slice(0, 15).join(', '), firstKeys.length > 15 ? '(+more)' : '');
-        if (first.card) {
-          log('buildCardMap:   → has .card wrapper – card.name:', first.card.name,
-            'set:', first.card.set, 'cn:', first.card.cn);
-        } else if (first.name) {
-          log('buildCardMap:   → flat entry – name:', first.name,
-            'set:', first.set, 'cn:', first.cn);
-        }
-      }
-
-      for (const entry of entries) {
-        // v2 format: { card: { name, set, cn, … }, quantity, … }
-        // v3 format: the entry itself is the card object { name, set, cn, … }
-        //   or sometimes: { quantity, boardType, card: { name, set, cn, … } }
-        const card = entry?.card || entry;
-        if (!card?.name) continue;
-
-        const set = (card.set || card.setCode || '').toLowerCase();
-        const cn  = String(card.cn || card.collector_number || card.collectorNumber || '');
-        if (!set || !cn) {
-          log('buildCardMap: skipping card', card.name, '– set:', set, 'cn:', cn);
-          continue;
-        }
-
-        const info = { name: card.name, set, cn };
-        cardMap.set(card.name.toLowerCase(), info);
-
-        // For double-faced cards ("Front // Back"), also key by front face.
-        if (card.name.includes(' // ')) {
-          const front = card.name.split(' // ')[0].trim().toLowerCase();
-          if (!cardMap.has(front)) cardMap.set(front, info);
-        }
-      }
-    }
-
-    log('Card lookup ready –', cardMap.size, 'entries');
-    return cardMap.size > 0;
   }
 
   // ─── Prefetch tags for entire deck ─────────────────────────────────
@@ -404,18 +321,6 @@
       parent = parent.parentElement;
     }
   }
-
-  /**
-   * Heuristic: the Moxfield card context menu is a dropdown/popover
-   * containing menu items like "Switch Printing", "Change Tags", etc.
-   * We search broadly and accept any element whose text contains at
-   * least two of the known menu items.
-   */
-  const MENU_KEYWORDS = [
-    'Switch Printing', 'Change Tags', 'View Details',
-    'Copy Card Name', 'Change Mana Cost', 'Set as Deck Image',
-    'Add One', 'Remove',
-  ];
 
   function isCardMenu(el) {
     if (!el || el === document.body || el === document.documentElement) return false;
@@ -523,13 +428,13 @@
     insertionPoint.after(wrapper);
 
     // Reset injecting when menu disappears.
-    const cleanup = new MutationObserver(() => {
+    const cleanupObs = new MutationObserver(() => {
       if (!document.body.contains(menu)) {
-        cleanup.disconnect();
+        cleanupObs.disconnect();
         injecting = false;
       }
     });
-    cleanup.observe(document.body, { childList: true, subtree: true });
+    cleanupObs.observe(document.body, { childList: true, subtree: true });
 
     try {
       let tags = tagCache.get(cacheKey);
@@ -763,11 +668,6 @@
   // Provides tag name suggestions when typing otag:/oracletag:/function:
   // or art:/atag:/arttag: in the #deckbox-search input.
 
-  const ORACLE_PREFIXES = ['otag:', 'oracletag:', 'function:'];
-  const ART_PREFIXES = ['art:', 'atag:', 'arttag:'];
-  const ALL_PREFIXES = [...ORACLE_PREFIXES, ...ART_PREFIXES];
-  const MAX_VISIBLE = 10;
-
   function setupAutocomplete() {
     acInput = document.getElementById('deckbox-search');
     if (acInput) {
@@ -820,46 +720,31 @@
     const val = acInput.value;
     const cursor = acInput.selectionStart ?? val.length;
 
-    // Find the current word at cursor: walk back to a space or start.
-    let wordStart = cursor;
-    while (wordStart > 0 && val[wordStart - 1] !== ' ') {
-      wordStart--;
-    }
-    const word = val.substring(wordStart, cursor).toLowerCase();
-
-    // Check if the word starts with a known prefix.
-    let matchedPrefix = null;
-    for (const p of ALL_PREFIXES) {
-      if (word.startsWith(p)) {
-        matchedPrefix = p;
-        break;
-      }
-    }
-
-    if (!matchedPrefix) {
+    const parsed = parseInput(val, cursor);
+    if (!parsed || !parsed.partial) {
       closeAcDropdown();
       return;
     }
 
-    const partial = word.substring(matchedPrefix.length);
-    acCurrentPrefix = matchedPrefix;
-    acWordStart = wordStart;
+    acCurrentPrefix = parsed.prefix;
+    acWordStart = parsed.wordStart;
 
     // Determine which tag list to use.
-    const isOracle = ORACLE_PREFIXES.includes(matchedPrefix);
+    const isOracle = parsed.isOracle;
 
     // Ensure we have tag names.
     if (isOracle && acOracleTagNames) {
-      showFilteredTags(acOracleTagNames, partial);
+      showFilteredTags(acOracleTagNames, parsed.partial);
     } else if (!isOracle && acArtTagNames) {
-      showFilteredTags(acArtTagNames, partial);
+      showFilteredTags(acArtTagNames, parsed.partial);
     } else {
       // Need to fetch tag names from background.
+      const matchedPrefix = parsed.prefix;
       fetchTagNames().then(() => {
         // Re-check — the input may have changed while we were fetching.
         if (acInput && acCurrentPrefix === matchedPrefix) {
           const list = isOracle ? acOracleTagNames : acArtTagNames;
-          if (list) showFilteredTags(list, partial);
+          if (list) showFilteredTags(list, parsed.partial);
         }
       });
     }
@@ -883,36 +768,13 @@
   }
 
   function showFilteredTags(tagList, partial) {
-    // Require at least 1 character after the prefix to avoid rendering
-    // thousands of items when the user just typed "otag:" or "art:".
-    if (!partial) {
-      closeAcDropdown();
-      return;
-    }
-
-    // Match any dash-delimited word prefix within the tag name.
-    // e.g. "count" matches "counters-matter" (word "counters") and
-    // "add-counters" (word "counters") but not "accounting".
-    const lowerPartial = partial.toLowerCase();
-    acCurrentPartial = lowerPartial;
-    acFilteredTags = tagList.filter(t => {
-      const words = t.toLowerCase().split('-');
-      return words.some(w => w.startsWith(lowerPartial));
-    });
+    acFilteredTags = filterAndSortTags(tagList, partial);
+    acCurrentPartial = partial.toLowerCase();
 
     if (acFilteredTags.length === 0) {
       closeAcDropdown();
       return;
     }
-
-    // Sort: tags starting with the partial come first (prefix match on the
-    // whole tag), then tags where a later word matches, each group alphabetical.
-    acFilteredTags.sort((a, b) => {
-      const aPrefix = a.toLowerCase().startsWith(lowerPartial) ? 0 : 1;
-      const bPrefix = b.toLowerCase().startsWith(lowerPartial) ? 0 : 1;
-      if (aPrefix !== bPrefix) return aPrefix - bPrefix;
-      return a.localeCompare(b);
-    });
 
     renderAcDropdown();
   }
@@ -935,14 +797,12 @@
     acDropdown.style.minWidth = rect.width + 'px';
 
     // Cap rendered items for short partials to avoid DOM bloat; remove cap at 3+ chars.
-    const renderCount = acCurrentPartial.length >= 3
-      ? acFilteredTags.length
-      : Math.min(acFilteredTags.length, MAX_VISIBLE * 5);
+    const count = renderCount(acFilteredTags.length, acCurrentPartial.length);
     acDropdown.innerHTML = '';
     acItems = [];
     acHighlightIdx = 0;
 
-    for (let i = 0; i < renderCount; i++) {
+    for (let i = 0; i < count; i++) {
       const tag = acFilteredTags[i];
       const item = document.createElement('div');
       item.className = 'moxtags-autocomplete-item';
@@ -965,20 +825,15 @@
    * of each matching dash-delimited word wrapped in <b>.
    */
   function buildHighlightedTag(tag, partial) {
+    const segments = highlightTag(tag, partial);
     const frag = document.createDocumentFragment();
-    const parts = tag.split('-');
-    const pLen = partial.length;
-
-    for (let i = 0; i < parts.length; i++) {
-      if (i > 0) frag.appendChild(document.createTextNode('-'));
-      const word = parts[i];
-      if (word.toLowerCase().startsWith(partial)) {
+    for (const seg of segments) {
+      if (seg.bold) {
         const b = document.createElement('b');
-        b.textContent = word.substring(0, pLen);
+        b.textContent = seg.text;
         frag.appendChild(b);
-        frag.appendChild(document.createTextNode(word.substring(pLen)));
       } else {
-        frag.appendChild(document.createTextNode(word));
+        frag.appendChild(document.createTextNode(seg.text));
       }
     }
     return frag;

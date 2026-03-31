@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
   "name": "MoxTags",
-  "version": "1.3.1",
+  "version": "1.1.0",
   "author": "Nate Finch",
   "homepage_url": "https://github.com/natefinch/moxtags",
-  "description": "Adds Scryfall Tagger art and card tags to Moxfield deck card menus, as well as tab completion for tags in the search box.",
+  "description": "Adds Scryfall Tagger art and card tags to Moxfield deck card menus",
   "permissions": [
     "storage",
     "unlimitedStorage",
@@ -26,9 +26,7 @@
         "https://moxfield.com/decks/*",
         "https://www.moxfield.com/decks/*"
       ],
-      "js": [
-        "page_hook.js"
-      ],
+      "js": ["page_hook.js"],
       "run_at": "document_start",
       "world": "MAIN"
     },
@@ -37,12 +35,8 @@
         "https://moxfield.com/decks/*",
         "https://www.moxfield.com/decks/*"
       ],
-      "js": [
-        "content.js"
-      ],
-      "css": [
-        "styles.css"
-      ],
+      "js": ["content.js"],
+      "css": ["styles.css"],
       "run_at": "document_idle"
     }
   ],

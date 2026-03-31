@@ -2,8 +2,8 @@
 set -euo pipefail
 
 # MoxTags Release Script
-# Creates a git tag, builds the extension, packages it into a zip, and
-# uploads it to GitHub as a draft release.
+# Creates a git tag, builds the extension for Chrome and Firefox,
+# packages both into zips, and uploads them to GitHub as a draft release.
 #
 # By default, increments the minor version (e.g. v1.4.2 → v1.5.0).
 # Use --patch to increment only the patch version (e.g. v1.4.2 → v1.4.3).
@@ -31,8 +31,8 @@ for arg in "$@"; do
   esac
 done
 
-# Read current version from manifest.json
-CURRENT=$(node -e "import{readFileSync as r}from'fs';console.log(JSON.parse(r('manifest.json','utf8')).version)")
+# Read current version from manifests/base.json
+CURRENT=$(node -e "import{readFileSync as r}from'fs';console.log(JSON.parse(r('manifests/base.json','utf8')).version)")
 IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
 
 if [[ "$BUMP" == "patch" ]]; then
@@ -43,27 +43,13 @@ fi
 
 TAG="v${VERSION}"
 
-# Files included in the release zip (only what's needed to run the extension)
-ZIP_FILES=(
-  icons/
-  background.js
-  content.js
-  manifest.json
-  page_hook.js
-  popup.html
-  popup.js
-  styles.css
-)
-
 echo "Current version: $CURRENT → releasing $TAG ($BUMP bump)"
 
 if $DRYRUN; then
   echo ""
   echo "[dry run] Would create tag: $TAG"
-  echo "[dry run] Would create zip: moxtags-${TAG}.zip containing:"
-  for f in "${ZIP_FILES[@]}"; do
-    echo "  $f"
-  done
+  echo "[dry run] Would build Chrome and Firefox extensions"
+  echo "[dry run] Would create zips: moxtags-chrome-${TAG}.zip, moxtags-firefox-${TAG}.zip"
   echo ""
   echo "[dry run] No changes made."
   exit 0
@@ -81,9 +67,14 @@ if ! command -v zip &>/dev/null; then
   exit 1
 fi
 
+if ! command -v node &>/dev/null; then
+  echo "Error: node is required."
+  exit 1
+fi
+
 # Ensure we're in the repo root
-if [[ ! -f manifest.json ]]; then
-  echo "Error: must be run from the moxtags repo root (manifest.json not found)"
+if [[ ! -f manifests/base.json ]]; then
+  echo "Error: must be run from the moxtags repo root (manifests/base.json not found)"
   exit 1
 fi
 
@@ -106,37 +97,53 @@ if git rev-parse "$TAG" &>/dev/null; then
   exit 1
 fi
 
-# --- Update version in manifest.json ---
+# --- Update version ---
 
 echo "Updating version to $VERSION..."
 
-# Use node for reliable JSON editing
+# Update manifests/base.json
 node -e "
   import { readFileSync, writeFileSync } from 'fs';
-  const json = JSON.parse(readFileSync('manifest.json', 'utf8'));
+  const json = JSON.parse(readFileSync('manifests/base.json', 'utf8'));
   json.version = '${VERSION}';
-  writeFileSync('manifest.json', JSON.stringify(json, null, 2) + '\n');
-  console.log('  manifest.json ✓');
+  writeFileSync('manifests/base.json', JSON.stringify(json, null, 2) + '\n');
+  console.log('  manifests/base.json ✓');
 "
+
+# Update package.json
+node -e "
+  import { readFileSync, writeFileSync } from 'fs';
+  const json = JSON.parse(readFileSync('package.json', 'utf8'));
+  json.version = '${VERSION}';
+  writeFileSync('package.json', JSON.stringify(json, null, 2) + '\n');
+  console.log('  package.json ✓');
+"
+
+# --- Build ---
+
+echo "Building extensions..."
+node build.js
 
 # --- Commit version bump & tag ---
 
-git add manifest.json
+git add manifests/base.json package.json
 git commit -m "Release $TAG"
 git tag -a "$TAG" -m "Release $TAG"
 
 echo "Created tag $TAG"
 
-# --- Package zip ---
+# --- Package zips ---
 
-ZIPFILE="moxtags-${TAG}.zip"
+CHROME_ZIP="moxtags-chrome-${TAG}.zip"
+FIREFOX_ZIP="moxtags-firefox-${TAG}.zip"
 
-echo "Packaging $ZIPFILE..."
+echo "Packaging $CHROME_ZIP..."
+(cd dist/chrome && zip -r "../../$CHROME_ZIP" .)
+echo "  $(du -h "$CHROME_ZIP" | cut -f1) $CHROME_ZIP"
 
-# Only include files needed to run the extension (no source, tests, build tools, docs)
-zip -r "$ZIPFILE" "${ZIP_FILES[@]}"
-
-echo "  $(du -h "$ZIPFILE" | cut -f1) $ZIPFILE"
+echo "Packaging $FIREFOX_ZIP..."
+(cd dist/firefox && zip -r "../../$FIREFOX_ZIP" .)
+echo "  $(du -h "$FIREFOX_ZIP" | cut -f1) $FIREFOX_ZIP"
 
 # --- Push tag and create draft release ---
 
@@ -144,21 +151,27 @@ echo "Pushing tag to origin..."
 git push origin main "$TAG"
 
 echo "Creating draft release on GitHub..."
-gh release create "$TAG" "$ZIPFILE" \
+gh release create "$TAG" "$CHROME_ZIP" "$FIREFOX_ZIP" \
   --repo natefinch/moxtags \
   --title "MoxTags $TAG" \
   --notes "## Installation
 
-1. Download **${ZIPFILE}** below
+### Chrome
+1. Download **${CHROME_ZIP}** below
 2. Unzip it to a folder
 3. Open Chrome → \`chrome://extensions\`
 4. Enable **Developer mode**
-5. Click **Load unpacked** and select the unzipped folder" \
+5. Click **Load unpacked** and select the unzipped folder
+
+### Firefox
+1. Download **${FIREFOX_ZIP}** below
+2. Open Firefox → \`about:debugging#/runtime/this-firefox\`
+3. Click **Load Temporary Add-on** and select the zip file (or any file inside it)" \
   --draft
 
 # --- Cleanup ---
 
-rm "$ZIPFILE"
+rm "$CHROME_ZIP" "$FIREFOX_ZIP"
 
 echo ""
 echo "Done! Draft release $TAG created at:"

@@ -1,7 +1,9 @@
 <p align="center"><img width="273" height="773" alt="image"  src="https://github.com/user-attachments/assets/5b4386cf-3e44-472f-a92d-51ddb96234b2" /></p>
 
-A Chrome extension that adds **Scryfall Tagger** art tags and card tags to the
-card context menus on [Moxfield](https://moxfield.com) as well as adding tag auto-complete in search bars.
+A browser extension (Chrome and Firefox) that adds **Scryfall Tagger** art
+tags and card tags to the card context menus on
+[Moxfield](https://moxfield.com) as well as adding tag auto-complete in
+search bars.
 
 ## MoxTags
 
@@ -20,6 +22,22 @@ The problem? Moxfield doesn't surface these tags anywhere. You'd have to leave y
 ## Install
 
 Go to [releases](./releases) to install the latest release.
+
+### Chrome
+
+1. Download the `moxtags-chrome-vX.Y.Z.zip` file from the latest release
+2. Unzip it to a folder
+3. Open Chrome → `chrome://extensions`
+4. Enable **Developer mode**
+5. Click **Load unpacked** and select the unzipped folder
+
+### Firefox
+
+Requires Firefox 128 or later.
+
+1. Download the `moxtags-firefox-vX.Y.Z.zip` file from the latest release
+2. Open Firefox → `about:debugging#/runtime/this-firefox`
+3. Click **Load Temporary Add-on** and select the zip file (or any file inside it)
 
 Note that the first time you install MoxTags, it has to download a complete cache of tag data from scryfall. Depending on your internet speeds this may take anywhere from a few seconds to possibly up to a few minutes. MoxTags won't work until this is finished. You can check on the status by clicking on the MoxTags toolbar button in your list of extensions.
 
@@ -47,3 +65,43 @@ Ever wanted to search by tags and couldn't remember exactly how the tag was word
 ## License
 
 MIT
+
+## Development
+
+### Prerequisites
+
+- Node.js (for building and testing)
+
+### Setup
+
+```bash
+npm install
+```
+
+### Build
+
+```bash
+npm run build          # Build both Chrome and Firefox
+npm run build:chrome   # Build Chrome only
+npm run build:firefox  # Build Firefox only
+```
+
+Built extensions are output to `dist/chrome/` and `dist/firefox/`.
+
+### Test
+
+```bash
+npm test
+```
+
+### Release
+
+```bash
+./release.sh           # Bump minor version, build, tag, and create draft GitHub release
+./release.sh --patch   # Bump patch version only
+./release.sh --dryrun  # Preview what would happen
+```
+
+### Architecture
+
+See [DESIGN.md](DESIGN.md) for detailed architecture documentation.

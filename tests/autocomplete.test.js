@@ -4,91 +4,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-// ─── Replicas of the filtering/highlighting logic from content.js ────
-
-const ORACLE_PREFIXES = ['otag:', 'oracletag:', 'function:'];
-const ART_PREFIXES = ['art:', 'atag:', 'arttag:'];
-const ALL_PREFIXES = [...ORACLE_PREFIXES, ...ART_PREFIXES];
-const MAX_VISIBLE = 10;
-
-/**
- * Filter tags whose dash-delimited words have a prefix matching `partial`.
- * Mirrors showFilteredTags() in content.js.
- */
-function filterTags(tagList, partial) {
-  if (!partial) return [];
-  const lowerPartial = partial.toLowerCase();
-  const filtered = tagList.filter(t => {
-    const words = t.toLowerCase().split('-');
-    return words.some(w => w.startsWith(lowerPartial));
-  });
-  // Sort: whole-tag prefix matches first, then later-word matches, alphabetical within each.
-  filtered.sort((a, b) => {
-    const aPrefix = a.toLowerCase().startsWith(lowerPartial) ? 0 : 1;
-    const bPrefix = b.toLowerCase().startsWith(lowerPartial) ? 0 : 1;
-    if (aPrefix !== bPrefix) return aPrefix - bPrefix;
-    return a.localeCompare(b);
-  });
-  return filtered;
-}
-
-/**
- * Compute the render count, matching renderAcDropdown() logic.
- */
-function renderCount(filteredLength, partialLength) {
-  if (partialLength >= 3) return filteredLength;
-  return Math.min(filteredLength, MAX_VISIBLE * 5);
-}
-
-/**
- * Parse the input value at a cursor position and return the matched prefix
- * and partial, or null if no prefix is found. Mirrors onAcInput() logic.
- */
-function parseInput(value, cursor) {
-  let wordStart = cursor;
-  while (wordStart > 0 && value[wordStart - 1] !== ' ') {
-    wordStart--;
-  }
-  const word = value.substring(wordStart, cursor).toLowerCase();
-
-  let matchedPrefix = null;
-  for (const p of ALL_PREFIXES) {
-    if (word.startsWith(p)) {
-      matchedPrefix = p;
-      break;
-    }
-  }
-  if (!matchedPrefix) return null;
-
-  const partial = word.substring(matchedPrefix.length);
-  const isOracle = ORACLE_PREFIXES.includes(matchedPrefix);
-  return { prefix: matchedPrefix, partial, wordStart, isOracle };
-}
-
-/**
- * Build highlighted segments for a tag given a partial.
- * Returns an array of { text, bold } objects.
- * Mirrors buildHighlightedTag() in content.js.
- */
-function highlightTag(tag, partial) {
-  const parts = tag.split('-');
-  const pLen = partial.length;
-  const segments = [];
-
-  for (let i = 0; i < parts.length; i++) {
-    if (i > 0) segments.push({ text: '-', bold: false });
-    const word = parts[i];
-    if (word.toLowerCase().startsWith(partial)) {
-      segments.push({ text: word.substring(0, pLen), bold: true });
-      if (word.length > pLen) {
-        segments.push({ text: word.substring(pLen), bold: false });
-      }
-    } else {
-      segments.push({ text: word, bold: false });
-    }
-  }
-  return segments;
-}
+import { filterAndSortTags, parseInput, renderCount, highlightTag } from '../src/shared/autocomplete.js';
 
 // ─── Tests ───────────────────────────────────────────────────────────
 
@@ -109,49 +25,49 @@ const SAMPLE_TAGS = [
 
 // ── Word-prefix matching ─────────────────────────────────────────────
 
-describe('filterTags – word-prefix matching', () => {
+describe('filterAndSortTags – word-prefix matching', () => {
   it('matches a word at the start of a tag', () => {
-    const result = filterTags(SAMPLE_TAGS, 'add');
+    const result = filterAndSortTags(SAMPLE_TAGS, 'add');
     assert.deepEqual(result, ['add-counters', 'add-counters-twice']);
   });
 
   it('matches a word in the middle of a tag', () => {
-    const result = filterTags(SAMPLE_TAGS, 'count');
+    const result = filterAndSortTags(SAMPLE_TAGS, 'count');
     assert.deepEqual(result, ['counters-matter', 'add-counters', 'add-counters-twice']);
   });
 
   it('does not match a substring that is not a word prefix', () => {
-    const result = filterTags(SAMPLE_TAGS, 'ount');
+    const result = filterAndSortTags(SAMPLE_TAGS, 'ount');
     assert.deepEqual(result, []);
   });
 
   it('"count" does not match "accounting" (not a word prefix)', () => {
-    const result = filterTags(SAMPLE_TAGS, 'count');
+    const result = filterAndSortTags(SAMPLE_TAGS, 'count');
     assert.ok(!result.includes('accounting'));
   });
 
   it('matches are case-insensitive', () => {
     const tags = ['Draw-Cards', 'card-draw'];
-    const result = filterTags(tags, 'Draw');
+    const result = filterAndSortTags(tags, 'Draw');
     assert.deepEqual(result, ['Draw-Cards', 'card-draw']);
   });
 
   it('returns empty for empty partial', () => {
-    assert.deepEqual(filterTags(SAMPLE_TAGS, ''), []);
+    assert.deepEqual(filterAndSortTags(SAMPLE_TAGS, ''), []);
   });
 
   it('single-word tags match by prefix', () => {
-    const result = filterTags(SAMPLE_TAGS, 'ram');
+    const result = filterAndSortTags(SAMPLE_TAGS, 'ram');
     assert.deepEqual(result, ['ramp', 'ramp-artifact']);
   });
 
   it('exact word match works', () => {
-    const result = filterTags(SAMPLE_TAGS, 'ramp');
+    const result = filterAndSortTags(SAMPLE_TAGS, 'ramp');
     assert.deepEqual(result, ['ramp', 'ramp-artifact']);
   });
 
   it('sorts whole-tag prefix matches before later-word matches', () => {
-    const result = filterTags(SAMPLE_TAGS, 'count');
+    const result = filterAndSortTags(SAMPLE_TAGS, 'count');
     // counters-matter starts with "count", so it comes first;
     // add-counters and add-counters-twice match a later word.
     assert.deepEqual(result, ['counters-matter', 'add-counters', 'add-counters-twice']);
@@ -159,7 +75,7 @@ describe('filterTags – word-prefix matching', () => {
 
   it('sorts alphabetically within each group', () => {
     const tags = ['z-draw', 'draw-first', 'a-draw', 'draw-second'];
-    const result = filterTags(tags, 'draw');
+    const result = filterAndSortTags(tags, 'draw');
     assert.deepEqual(result, ['draw-first', 'draw-second', 'a-draw', 'z-draw']);
   });
 });

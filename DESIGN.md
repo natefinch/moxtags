@@ -1,12 +1,14 @@
 # MoxTags — Design & Implementation
 
 This document describes the architecture, data flow, and implementation details
-of the MoxTags Chrome extension. It is intended for developers maintaining the
-code and for AI tools that need to understand how the system works.
+of the MoxTags browser extension (Chrome and Firefox). It is intended for
+developers maintaining the code and for AI tools that need to understand how
+the system works.
 
 ## Table of Contents
 
 - [Architecture Overview](#architecture-overview)
+- [Project Structure & Build](#project-structure--build)
 - [Extension Manifest & Execution Contexts](#extension-manifest--execution-contexts)
 - [Startup & Initialization Flow](#startup--initialization-flow)
 - [Deck Data Acquisition](#deck-data-acquisition)
@@ -26,7 +28,8 @@ code and for AI tools that need to understand how the system works.
 
 ## Architecture Overview
 
-MoxTags is a Manifest V3 Chrome extension with four execution contexts:
+MoxTags is a Manifest V3 browser extension (Chrome and Firefox) with four
+execution contexts:
 
 1. **MAIN world content script** (`page_hook.js`) — runs in the page's own
    JavaScript context to intercept Moxfield API responses.
@@ -44,42 +47,113 @@ These contexts communicate via two mechanisms:
   `content.js` (ISOLATED world) using a hidden DOM element and an HTML
   attribute as a signaling flag.
 - **`chrome.runtime.sendMessage`** between `content.js`/`popup.js` and the
-  background service worker.
+  background service worker. (Firefox supports the `chrome.*` namespace via
+  its compatibility layer.)
+
+---
+
+## Project Structure & Build
+
+### Source Layout
+
+```
+src/
+├── shared/               # Pure logic — no browser APIs
+│   ├── autocomplete.js   # Filtering, sorting, highlighting for tag autocomplete
+│   ├── tags.js           # buildReverseIndex, extractTagNames
+│   ├── deck.js           # buildCardMap — Moxfield deck JSON parsing
+│   └── constants.js      # URLs, prefixes, intervals, menu keywords
+├── background.js         # Service worker entry point
+├── content.js            # Content script entry point
+├── page_hook.js          # MAIN world hook (plain JS, no imports)
+├── popup.js              # Popup UI
+├── popup.html
+└── styles.css
+```
+
+Files in `src/shared/` are pure JavaScript modules with no browser API
+dependencies. They are imported by the entry points (`background.js`,
+`content.js`) and by tests.
+
+### Build Process
+
+The extension is built with [esbuild](https://esbuild.github.io/) via
+`build.js`. Run `node build.js` (or `npm run build`) to produce both
+browser packages:
+
+- `dist/chrome/` — Chrome extension
+- `dist/firefox/` — Firefox extension
+
+esbuild bundles each entry point into a self-contained IIFE (Immediately
+Invoked Function Expression), inlining all `src/shared/` imports. This is
+necessary because extension content scripts and service workers cannot use
+ES module `import` at runtime.
+
+`page_hook.js` is copied as-is (no bundling) since it runs in the MAIN world
+and contains no imports.
+
+### Manifest Generation
+
+Browser-specific manifests are assembled from templates in `manifests/`:
+
+- `manifests/base.json` — all shared fields (permissions, content scripts, etc.)
+- `manifests/chrome.json` — Chrome-specific overrides (currently empty)
+- `manifests/firefox.json` — Firefox-specific settings (`browser_specific_settings.gecko`)
+
+The build script merges `base.json` with the browser-specific file to produce
+each `dist/{browser}/manifest.json`.
+
+### Firefox Compatibility
+
+Firefox 128+ is required (supports MV3 service workers and `world: "MAIN"`).
+The extension uses the `chrome.*` API namespace throughout, which Firefox
+supports via its built-in compatibility layer. CSS includes both WebKit
+scrollbar pseudo-elements (Chrome) and standard `scrollbar-width`/
+`scrollbar-color` properties (Firefox).
+
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `npm run build` | Build both Chrome and Firefox packages |
+| `npm run build:chrome` | Build Chrome only |
+| `npm run build:firefox` | Build Firefox only |
+| `npm test` | Run all tests |
+| `./release.sh` | Build, tag, package, and create GitHub draft release |
 
 ---
 
 ## Extension Manifest & Execution Contexts
 
-Defined in [manifest.json](manifest.json):
+Defined in `manifests/base.json` (merged with browser-specific overrides at
+build time — see [Project Structure & Build](#project-structure--build)):
 
 ### Content Scripts
 
 Two content script entries are registered, both matching Moxfield deck pages
 (`https://moxfield.com/decks/*` and `https://www.moxfield.com/decks/*`):
 
-1. **`page_hook.js`** ([manifest.json#L17-L24](manifest.json#L17-L24))
+1. **`page_hook.js`**
    - `run_at: "document_start"` — injected before the page's own scripts run.
    - `world: "MAIN"` — shares the page's JavaScript context, enabling it to
      monkey-patch `window.fetch` and `XMLHttpRequest`.
 
-2. **`content.js` + `styles.css`** ([manifest.json#L25-L34](manifest.json#L25-L34))
+2. **`content.js` + `styles.css`**
    - `run_at: "document_idle"` — injected after the DOM is ready.
-   - Runs in the default ISOLATED world, with access to Chrome extension APIs
+   - Runs in the default ISOLATED world, with access to extension APIs
      (`chrome.runtime.sendMessage`).
 
 ### Permissions
 
 - `storage` + `unlimitedStorage` — for persisting Scryfall tag indexes in
-  `chrome.storage.local` ([manifest.json#L6-L9](manifest.json#L6-L9)).
+  `chrome.storage.local`.
 - `alarms` — for scheduling daily tag data refresh.
-- `host_permissions` for `api2.moxfield.com` and `api.scryfall.com`
-  ([manifest.json#L10-L14](manifest.json#L10-L14)) — allows the background
-  service worker to make cross-origin requests to both APIs.
+- `host_permissions` for `api2.moxfield.com` and `api.scryfall.com` — allows
+  the background service worker to make cross-origin requests to both APIs.
 
 ### Background Service Worker
 
-`background.js` is registered as the service worker
-([manifest.json#L35-L37](manifest.json#L35-L37)). It handles all network
+`background.js` is registered as the service worker. It handles all network
 requests to external APIs and manages the tag data cache.
 
 ---
@@ -89,11 +163,11 @@ requests to external APIs and manages the tag data cache.
 ### Background Worker Startup
 
 On `chrome.runtime.onInstalled` and `chrome.runtime.onStartup`
-([background.js#L25-L31](background.js#L25-L31)), the worker calls
+(`src/background.js`), the worker calls
 `scheduleRefresh()` to set up a `chrome.alarms` timer for the next tag data
 refresh. Tag indexes are **not** loaded at startup — they are loaded lazily on
 the first `fetchTags` or `prefetchDeck` call via `ensureIndexes()`
-([background.js#L219-L240](background.js#L219-L240)).
+(`src/background.js`).
 
 ### Page Hook Startup
 
@@ -101,30 +175,30 @@ the first `fetchTags` or `prefetchDeck` call via `ensureIndexes()`
 immediately:
 1. Saves references to the original `window.fetch` and
    `XMLHttpRequest.prototype.open`
-   ([page_hook.js#L89](page_hook.js#L89),
-    [page_hook.js#L131](page_hook.js#L131)).
+   (`src/page_hook.js`,
+    `src/page_hook.js`).
 2. Replaces them with wrapper functions that intercept responses matching the
    deck API URL pattern `/v[23]/decks/all/<id>`
-   ([page_hook.js#L12](page_hook.js#L12)).
+   (`src/page_hook.js`).
 3. Sets up a `MutationObserver` to detect when the content script resets the
    `data-moxtags-deck` attribute (for SPA navigation)
-   ([page_hook.js#L166-L183](page_hook.js#L166-L183)).
+   (`src/page_hook.js`).
 
 ### Content Script Startup
 
 `content.js` runs at `document_idle` in the ISOLATED world. The `init()`
-function ([content.js#L22-L45](content.js#L22-L45)):
+function (`src/content.js`):
 1. Extracts the deck ID from the URL via `extractDeckId()`
-   ([content.js#L66-L69](content.js#L66-L69)).
+   (`src/content.js`).
 2. Calls `fetchDeckData()` to load the card list (see
    [Deck Data Acquisition](#deck-data-acquisition)).
 3. Registers a `mousedown` listener on the document for card click tracking
-   ([content.js#L31](content.js#L31)).
+   (`src/content.js`).
 4. Creates a `MutationObserver` on `document.body` to detect dynamically
    inserted context menus
-   ([content.js#L34-L42](content.js#L34-L42)).
+   (`src/content.js`).
 5. Starts a URL-polling interval via `watchNavigation()` for SPA navigation
-   detection ([content.js#L44](content.js#L44)).
+   detection (`src/content.js`).
 
 ---
 
@@ -132,7 +206,7 @@ function ([content.js#L22-L45](content.js#L22-L45)):
 
 The content script needs each card's `set` code and `collector_number` (`cn`)
 to look up tags. This data comes from the Moxfield deck API response.
-`fetchDeckData()` ([content.js#L147-L196](content.js#L147-L196)) uses two
+`fetchDeckData()` (`src/content.js`) uses two
 strategies in parallel:
 
 ### Strategy 1: Direct API Fetch (Public Decks)
@@ -144,29 +218,29 @@ Moxfield's public API. It tries two URL versions sequentially:
 
 These are unauthenticated requests (`credentials: 'omit'`), proxied through
 the background worker's `doFetch()` function
-([background.js#L89-L102](background.js#L89-L102)) because content scripts
+(`src/background.js`) because content scripts
 cannot make cross-origin requests directly. The content script communicates
-with the worker via `bgFetch()` ([content.js#L698-L710](content.js#L698-L710)),
+with the worker via `bgFetch()` (`src/content.js`),
 sending a `{ type: 'fetch', url }` message.
 
 ### Strategy 2: Intercepted Response (Private Decks)
 
 Simultaneously with Strategy 1, the content script starts waiting for
 intercepted deck data via `waitForInterceptedDeck()`
-([content.js#L98-L143](content.js#L98-L143)). This sets up a
+(`src/content.js`). This sets up a
 `MutationObserver` watching for the `data-moxtags-deck` attribute on `<html>`
 to become `"ready"`, with a 12-second timeout.
 
 When Moxfield's own JavaScript fetches the deck (using the user's auth), the
 monkey-patched `fetch`/`XHR` in `page_hook.js` clones the response, parses it,
 validates it looks like deck data via `checkAndPublish()`
-([page_hook.js#L55-L84](page_hook.js#L55-L84)), and stores the JSON in a
+(`src/page_hook.js`), and stores the JSON in a
 hidden `<script id="moxtags-deck-json" type="application/json">` element
-([page_hook.js#L22-L52](page_hook.js#L22-L52)). It then sets
+(`src/page_hook.js`). It then sets
 `data-moxtags-deck="ready"` on `<html>`.
 
 The content script's `readInterceptedDeck()`
-([content.js#L76-L93](content.js#L76-L93)) reads the JSON from that DOM
+(`src/content.js`) reads the JSON from that DOM
 element.
 
 **Important:** No authentication tokens, cookies, or headers are captured or
@@ -182,7 +256,7 @@ loading fails and tag injection will not work.
 ### Building the Card Map
 
 Once deck JSON is obtained (from either strategy), `buildCardMap()`
-([content.js#L205-L283](content.js#L205-L283)) walks all boards in the
+(`src/content.js`) walks all boards in the
 response and populates the `cardMap` (`Map<lowercase card name, { name, set, cn }>`).
 
 It handles two API response shapes:
@@ -194,11 +268,11 @@ It handles two API response shapes:
 The recognized board names are: `mainboard`, `sideboard`, `commanders`,
 `companions`, `signatureSpells`, `considering`, `attractions`, `stickers`,
 `contraptions`, `planes`, `schemes`, `tokens`
-([content.js#L211-L215](content.js#L211-L215)).
+(`src/content.js`).
 
 For double-faced cards (`"Front // Back"`), the front face name is also
 added as a key so clicks on truncated card names still resolve
-([content.js#L273-L277](content.js#L273-L277)).
+(`src/content.js`).
 
 ---
 
@@ -211,7 +285,7 @@ The background worker downloads two bulk tag files from Scryfall's private API:
 - `https://api.scryfall.com/private/tags/illustration` — art/illustration tags
 
 These are defined as constants at
-[background.js#L4-L5](background.js#L4-L5).
+`src/background.js`.
 
 Each file contains an array of tag objects, where each tag has a `label`
 (string) and an array of IDs (`oracle_ids` or `illustration_ids`) that the
@@ -219,9 +293,9 @@ tag applies to.
 
 ### Reverse Index Construction
 
-`refreshTagData()` ([background.js#L249-L289](background.js#L249-L289))
+`refreshTagData()` (`src/background.js`)
 fetches both files, then calls `buildReverseIndex()`
-([background.js#L297-L313](background.js#L297-L313)) to invert them:
+(`src/background.js`) to invert them:
 
 - Input: `[ { label: "ramp", oracle_ids: ["uuid1", "uuid2", ...] }, ... ]`
 - Output: `Map<"uuid1", [{ name: "ramp", slug: "ramp" }]>`,
@@ -235,24 +309,24 @@ Two indexes are built:
 
 The indexes are serialized as arrays of `[key, value]` entries and stored in
 `chrome.storage.local` along with a `tagDataTimestamp`
-([background.js#L278-L284](background.js#L278-L284)). Additionally, sorted
+(`src/background.js`). Additionally, sorted
 unique tag name lists (`oracleTagNames` and `artTagNames`) are stored for
 the search box autocomplete feature. On subsequent loads, `ensureIndexes()`
 restores all of these from storage without re-fetching
-([background.js#L225-L237](background.js#L225-L237)).
+(`src/background.js`).
 
 ### Refresh Schedule
 
-`scheduleRefresh()` ([background.js#L321-L329](background.js#L321-L329))
+`scheduleRefresh()` (`src/background.js`)
 creates a `chrome.alarms` timer for 24 hours + 0–60 minutes of random jitter.
-When the alarm fires ([background.js#L331-L339](background.js#L331-L339)), the
+When the alarm fires (`src/background.js`), the
 indexes are refreshed and a new alarm is scheduled. On failure, a retry is
 scheduled in 1 hour.
 
 Stale data is also detected opportunistically: when `ensureIndexes()` loads
 data from storage, it checks the age against `REFRESH_INTERVAL_MS` (24 hours)
 and triggers a non-blocking background refresh if the data is too old
-([background.js#L233-L237](background.js#L233-L237)).
+(`src/background.js`).
 
 ---
 
@@ -267,38 +341,38 @@ A translation step is needed.
 ### Batch Prefetch
 
 After `buildCardMap()` succeeds, `prefetchAllTags()`
-([content.js#L287-L312](content.js#L287-L312)) collects all unique
+(`src/content.js`) collects all unique
 `{ set, cn }` pairs from the card map and sends them to the background
 worker as a `prefetchDeck` message.
 
 The background worker's `prefetchDeck()`
-([background.js#L142-L210](background.js#L142-L210)):
+(`src/background.js`):
 
 1. Filters out cards already in `cardIdCache` (in-memory `Map<"set/cn",
    { oracleId, illustrationId }>` at
-   [background.js#L21](background.js#L21)).
+   `src/background.js`).
 2. Batches remaining cards into groups of 75 (Scryfall's collection endpoint
    limit).
 3. POSTs each batch to `https://api.scryfall.com/cards/collection` with
    `{ identifiers: [{ set, collector_number }] }`
-   ([background.js#L163-L167](background.js#L163-L167)).
+   (`src/background.js`).
 4. Caches the `oracle_id` and `illustration_id` from each response card into
-   `cardIdCache` ([background.js#L175-L181](background.js#L175-L181)).
+   `cardIdCache` (`src/background.js`).
 5. Waits 100ms between batches to respect Scryfall's rate-limiting guidance
-   ([background.js#L189-L191](background.js#L189-L191)).
+   (`src/background.js`).
 6. Resolves tags for all requested cards against the cached indexes and
    returns the result as `{ ok: true, tags: { "set/cn": { artTags, cardTags } } }`
-   ([background.js#L196-L210](background.js#L196-L210)).
+   (`src/background.js`).
 
 The content script stores these resolved tags in `tagCache`
-([content.js#L302-L305](content.js#L302-L305)), so subsequent menu opens are
+(`src/content.js`), so subsequent menu opens are
 instant.
 
 ### Single-Card Fallback
 
 If a card was not covered by the batch prefetch (e.g. the prefetch failed or
 the card was missed), `fetchTags()`
-([background.js#L104-L135](background.js#L104-L135)) fetches a single card
+(`src/background.js`) fetches a single card
 from `https://api.scryfall.com/cards/<set>/<cn>` to resolve its IDs on demand.
 
 ---
@@ -308,12 +382,12 @@ from `https://api.scryfall.com/cards/<set>/<cn>` to resolve its IDs on demand.
 ### Click Tracking
 
 The content script listens for `mousedown` events on the document
-([content.js#L31](content.js#L31)). When fired, `onMouseDown()`
-([content.js#L315-L323](content.js#L315-L323)) calls `identifyCard()`,
+(`src/content.js`). When fired, `onMouseDown()`
+(`src/content.js`) calls `identifyCard()`,
 which walks up the DOM from the click target (up to 15 levels), scanning
 each ancestor's children for text that exactly matches a card name in
-`cardMap` ([content.js#L330-L339](content.js#L330-L339),
-[content.js#L341-L350](content.js#L341-L350)). If found, `currentCard` is
+`cardMap` (`src/content.js`,
+`src/content.js`). If found, `currentCard` is
 set to that card's `{ name, set, cn }` info.
 
 ### Menu Detection — Three Layers
@@ -324,36 +398,36 @@ extension uses three detection strategies:
 #### 1. MutationObserver (primary)
 
 The observer registered at init time
-([content.js#L34-L42](content.js#L34-L42)) watches `document.body` for:
+(`src/content.js`) watches `document.body` for:
 - `childList` changes (new nodes added)
 - `attributes` changes on `class`, `style`, `aria-hidden`, `hidden`
 
-The `onMutations()` handler ([content.js#L353-L366](content.js#L353-L366))
+The `onMutations()` handler (`src/content.js`)
 scans added nodes and attribute-changed targets via `scanForMenu()`, which
 checks the element and its descendants, then walks up to parents
-([content.js#L368-L389](content.js#L368-L389)).
+(`src/content.js`).
 
 #### 2. Click Polling (fallback)
 
-A `click` listener ([content.js#L434-L439](content.js#L434-L439)) fires
+A `click` listener (`src/content.js`) fires
 `pollForMenu()` at 100ms, 300ms, and 600ms delays to catch menus that the
 `MutationObserver` might miss. It searches using targeted CSS selectors
 (`[role="menu"]`, `[data-radix-popper-content-wrapper]`, class-name
 patterns, etc.) and a broader body-child walk
-([content.js#L441-L468](content.js#L441-L468)).
+(`src/content.js`).
 
 #### 3. Smallest-Menu Refinement
 
-`findSmallestMenu()` ([content.js#L475-L483](content.js#L475-L483))
+`findSmallestMenu()` (`src/content.js`)
 recursively finds the most specific (deepest) element that matches the menu
 heuristic, avoiding injection into an overly broad parent container.
 
 ### Menu Heuristic
 
-`isCardMenu()` ([content.js#L407-L420](content.js#L407-L420)) identifies a
+`isCardMenu()` (`src/content.js`) identifies a
 card context menu by checking whether an element's `textContent` contains
 at least 3 of these known Moxfield menu item strings
-([content.js#L398-L405](content.js#L398-L405)):
+(`src/content.js`):
 - "Switch Printing", "Change Tags", "View Details", "Copy Card Name",
   "Change Mana Cost", "Set as Deck Image", "Add One", "Remove"
 
@@ -363,22 +437,22 @@ elements that are part of a previously injected MoxTags section
 
 ### Tag Injection
 
-`injectTagsIntoMenu()` ([content.js#L486-L542](content.js#L486-L542)):
+`injectTagsIntoMenu()` (`src/content.js`):
 1. Debounces via the `injecting` flag to prevent multiple simultaneous
    injections.
 2. Removes any previous `.moxtags-injected` elements from the menu.
 3. Finds the "Buy on Mana Pool" menu item as an insertion anchor via
-   `findAnchorItem()` ([content.js#L549-L563](content.js#L549-L563)),
+   `findAnchorItem()` (`src/content.js`),
    falling back to the menu's last child.
 4. Creates a wrapper `<div class="moxtags-injected">` with a divider and
    a "Loading tags…" indicator.
 5. Inserts the wrapper after the anchor element.
 6. Sets up a cleanup observer that resets the `injecting` flag when the
    menu is removed from the DOM
-   ([content.js#L516-L521](content.js#L516-L521)).
+   (`src/content.js`).
 7. Looks up tags from `tagCache`; if missing, calls `loadTags()` which
    sends a `fetchTags` message to the background worker
-   ([content.js#L566-L583](content.js#L566-L583)).
+   (`src/content.js`).
 8. Replaces the loader with rendered tag submenus via `renderSubmenus()`.
 
 ---
@@ -387,11 +461,11 @@ elements that are part of a previously injected MoxTags section
 
 ### Submenu Structure
 
-`renderSubmenus()` ([content.js#L586-L600](content.js#L586-L600)) creates
+`renderSubmenus()` (`src/content.js`) creates
 up to two submenu triggers — "Art Tags" (prefix `art`) and "Card Tags"
 (prefix `otag`) — or a "No tags found" message if both are empty.
 
-`buildSubmenuTrigger()` ([content.js#L602-L688](content.js#L602-L688))
+`buildSubmenuTrigger()` (`src/content.js`)
 builds each trigger as:
 
 ```
@@ -418,11 +492,11 @@ Each individual tag link navigates to the current deck's search page:
 
 The multi-select "Search (N)" button combines all checked tags:
 `{deckUrl}/search?q={prefix}:{slug1} {prefix}:{slug2} ...`
-([content.js#L645-L649](content.js#L645-L649)).
+(`src/content.js`).
 
 ### Flyout Positioning
 
-`positionSubmenu()` ([content.js#L690-L708](content.js#L690-L708))
+`positionSubmenu()` (`src/content.js`)
 positions the flyout submenu on `mouseenter`:
 - Default: opens to the right (`left: 100%`).
 - Flips to left (`right: 100%`) if it would overflow the viewport width.
@@ -538,9 +612,9 @@ trigger a full page reload.
 
 ### Content Script Side
 
-`watchNavigation()` ([content.js#L714-L721](content.js#L714-L721)) polls
+`watchNavigation()` (`src/content.js`) polls
 `location.href` every 1 second. When the URL changes:
-1. `cleanup()` ([content.js#L47-L64](content.js#L47-L64)) disconnects the
+1. `cleanup()` (`src/content.js`) disconnects the
    MutationObserver, removes event listeners, clears all state maps, removes
    the stale `moxtags-deck-json` element, and removes the
    `data-moxtags-deck` attribute from `<html>`.
@@ -549,7 +623,7 @@ trigger a full page reload.
 ### Page Hook Side
 
 The page hook sets up its own `MutationObserver`
-([page_hook.js#L166-L183](page_hook.js#L166-L183)) watching for the removal
+(`src/page_hook.js`) watching for the removal
 of the `data-moxtags-deck` attribute. When content.js removes it during
 cleanup, the hook resets its `deckDataPublished` flag, allowing it to
 intercept the next deck's API response.
@@ -563,7 +637,7 @@ a status display for the tag data cache.
 
 ### Status Indicator
 
-`renderStatus()` ([popup.js#L42-L96](popup.js#L42-L96)) sets the dot color
+`renderStatus()` (`src/popup.js`) sets the dot color
 based on the background worker's state:
 - **Green (`.ready`):** Tag data is cached; shows download timestamp.
 - **Yellow pulsing (`.loading`):** Tag data is currently being downloaded.
@@ -574,7 +648,7 @@ based on the background worker's state:
 
 Clicking "Refresh tag data now" sends a `refreshTags` message to the
 background worker, then polls via `pollUntilReady()`
-([popup.js#L18-L28](popup.js#L18-L28)) at 800ms intervals until
+(`src/popup.js`) at 800ms intervals until
 `resp.refreshing` becomes false.
 
 ---
@@ -592,7 +666,7 @@ All messages use `chrome.runtime.sendMessage` with a `type` field.
 | `getStatus`      | `popup.js`    | `background.js` | (none)                               | `{ refreshing, tagDataTimestamp, oracleCount, illustrationCount, lastError }` |
 | `refreshTags`    | `popup.js`    | `background.js` | (none)                               | `{ ok, error? }`                                 |
 
-All message handlers in [background.js#L35-L82](background.js#L35-L82)
+All message handlers in `src/background.js`
 return `true` from the `onMessage` listener to indicate asynchronous
 `sendResponse` usage.
 
@@ -723,3 +797,20 @@ Moxfield uses React, which can insert elements via portals that may not
 trigger `MutationObserver` in all cases. The three-layer approach
 (MutationObserver → click polling with targeted selectors → body-child walk)
 provides robust detection across different React rendering paths and timing.
+
+### Why esbuild with IIFE bundles?
+
+Extension content scripts and service workers cannot use ES module `import`
+at runtime. esbuild bundles each entry point with all its `src/shared/`
+imports into a single IIFE file, making the modular source code compatible
+with the extension runtime. esbuild was chosen for its speed (sub-second
+builds) and zero configuration.
+
+### Why shared modules instead of a polyfill-only approach?
+
+The differences between Chrome and Firefox are small enough that a polyfill
+(like `webextension-polyfill`) would handle the API namespace divergence. But
+extracting pure logic into `src/shared/` provides a larger benefit: it makes
+all business logic testable without mocking browser APIs. Tests import
+directly from `src/shared/` modules, and the same source is used by both
+browser builds.
