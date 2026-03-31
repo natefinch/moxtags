@@ -801,7 +801,9 @@ import { ORACLE_PREFIXES, MENU_KEYWORDS, MAX_VISIBLE } from './shared/constants.
   }
 
   function addTagToCustomInput(input, tagName) {
-    const hashTag = '#' + tagName;
+    // "some-tag-name" → "#Some Tag Name"
+    const display = tagName.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+    const hashTag = '#' + display;
     const currentVal = input.value.trim();
 
     // Don't add duplicates.
