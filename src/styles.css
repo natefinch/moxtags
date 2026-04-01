@@ -36,12 +36,6 @@
   flex: 1;
 }
 
-.moxtags-trigger-count {
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.35);
-  margin: 0 8px 0 6px;
-}
-
 .moxtags-trigger-arrow {
   font-size: 11px;
   color: rgba(255, 255, 255, 0.4);

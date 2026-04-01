@@ -4,6 +4,7 @@
 import { buildCardMap } from './shared/deck.js';
 import { filterAndSortTags, parseInput, renderCount, highlightTag } from './shared/autocomplete.js';
 import { ORACLE_PREFIXES, MENU_KEYWORDS, MAX_VISIBLE } from './shared/constants.js';
+import { parseCardIdFromHref } from './shared/card.js';
 
 (function () {
   'use strict';
@@ -291,11 +292,13 @@ import { ORACLE_PREFIXES, MENU_KEYWORDS, MAX_VISIBLE } from './shared/constants.
         if (node.nodeType !== Node.ELEMENT_NODE) continue;
         scanForMenu(node);
         scanForDialog(node);
+        scanForCardDropdown(node);
       }
       // Also check attribute changes – menus may be shown/hidden via style.
       if (mut.type === 'attributes' && mut.target?.nodeType === Node.ELEMENT_NODE) {
         scanForMenu(mut.target);
         scanForDialog(mut.target);
+        scanForCardDropdown(mut.target);
       }
     }
   }
@@ -337,6 +340,91 @@ import { ORACLE_PREFIXES, MENU_KEYWORDS, MAX_VISIBLE } from './shared/constants.
     return hits >= 3;
   }
 
+  // ─── Search result card dropdown detection ─────────────────────────
+  // On deck search pages, each card has a small "Options" dropdown.
+  // It doesn't match the full context-menu heuristic, and Moxfield
+  // renders it as a React portal on <body>, not inside the card.
+  // Detect it by looking for .dropdown-menu elements with card-specific
+  // menu text like "Add to Main Deck".
+
+  const CARD_DROPDOWN_MARKERS = ['Add to Main Deck', 'Add to Sideboard'];
+
+  // Track which card's Options was most recently clicked, since Moxfield
+  // portals the dropdown to <body> (losing the card context).
+  let lastOptionsCard = null;
+
+  document.addEventListener('mousedown', (e) => {
+    const toggle = e.target.closest?.('.dropdown-toggle');
+    if (!toggle) return;
+    // Clear currentCard — the general onMouseDown handler may have matched
+    // a different card visible on the page (e.g. a deck card on the search
+    // results page) instead of the one whose Options button was clicked.
+    currentCard = null;
+    const card = toggle.closest('.decklist-card');
+    if (!card) return;
+    const nameEl = card.querySelector('.decklist-card-phantomsearch');
+    const name = nameEl?.textContent?.trim();
+    if (!name) return;
+    const info = cardMap.get(name.toLowerCase());
+    if (info) {
+      lastOptionsCard = info;
+    } else {
+      lastOptionsCard = { name, set: null, cn: null };
+    }
+    log('Options click tracked:', name, info ? `(${info.set}/${info.cn})` : '(not in deck)');
+  }, true);
+
+  function scanForCardDropdown(el) {
+    const candidates = [];
+    if (el.classList?.contains('dropdown-menu')) candidates.push(el);
+    if (el.querySelectorAll) {
+      candidates.push(...el.querySelectorAll('.dropdown-menu'));
+    }
+    // Walk up in case the mutation was inside a dropdown menu.
+    let parent = el.parentElement;
+    while (parent && parent !== document.body) {
+      if (parent.classList?.contains('dropdown-menu')) {
+        candidates.push(parent);
+        break;
+      }
+      parent = parent.parentElement;
+    }
+
+    for (const menu of candidates) {
+      if (menu.querySelector('.moxtags-injected')) continue;
+
+      // Case A: dropdown is inside a .decklist-card container.
+      const card = menu.closest('.decklist-card');
+      if (card) {
+        const nameEl = card.querySelector('.decklist-card-phantomsearch');
+        const name = nameEl?.textContent?.trim();
+        if (!name) continue;
+        const info = cardMap.get(name.toLowerCase());
+        if (!info) continue;
+        currentCard = info;
+        log('Card dropdown detected (inline):', name);
+        injectTagsIntoMenu(menu);
+        continue;
+      }
+
+      // Case B: body-level portal with card-action menu items.
+      const text = menu.textContent || '';
+      if (!CARD_DROPDOWN_MARKERS.some(m => text.includes(m))) continue;
+
+      // Identify the card from the tracked Options click (preferred) or
+      // the general mousedown context.
+      const cardInfo = lastOptionsCard || currentCard;
+      if (!cardInfo) {
+        log('Card dropdown found but could not identify card');
+        continue;
+      }
+      currentCard = cardInfo;
+
+      log('Card dropdown detected (portal):', currentCard.name);
+      injectTagsIntoMenu(menu);
+    }
+  }
+
   // ─── Polling fallback ──────────────────────────────────────────────
   // Sometimes React portals or other frameworks insert the menu in ways
   // the MutationObserver cannot catch reliably. Poll after mouse clicks.
@@ -348,7 +436,7 @@ import { ORACLE_PREFIXES, MENU_KEYWORDS, MAX_VISIBLE } from './shared/constants.
   }, true);
 
   function pollForMenu() {
-    if (!currentCard) return;
+    if (!currentCard && !lastOptionsCard) return;
     // Search for a card menu. Start from portals / overlays
     // which are typically direct children of body or within a high-level wrapper.
     const roots = document.querySelectorAll(
@@ -404,12 +492,39 @@ import { ORACLE_PREFIXES, MENU_KEYWORDS, MAX_VISIBLE } from './shared/constants.
       return;
     }
 
-    const { name, set, cn } = currentCard;
-    const cacheKey = `${set}/${cn}`;
+    let { name, set, cn } = currentCard;
 
-    // Find the "Buy on Mana Pool" item to insert after.
-    const anchor = findAnchorItem(menu, 'Buy on Mana Pool');
-    const insertionPoint = anchor || menu.lastElementChild;
+    // If we don't have set/cn, try to resolve via the Moxfield card ID
+    // from the "View Details" link in this dropdown menu.
+    if (!set || !cn) {
+      const moxCardId = extractCardIdFromMenu(menu);
+      if (moxCardId) {
+        log('Resolving card ID from menu:', moxCardId);
+        const resolved = await lookupCardByMoxfieldId(moxCardId);
+        if (resolved) {
+          set = resolved.set;
+          cn = resolved.cn;
+          currentCard = { name, set, cn };
+        }
+      }
+    }
+
+    // Determine where to insert our tags.
+    // Two-column deck context menu: insert into the left column after "Add to Wish List".
+    // Single-column Options dropdown: insert after "Buy on Mana Pool" at the bottom.
+    const leftCol = menu.querySelector('.d-flex.flex-nowrap > .d-inline-block:first-child');
+    const wishListAnchor = leftCol && findAnchorItem(leftCol, 'Add to Wish List');
+
+    let insertionPoint;
+    let insertionParent;
+    if (wishListAnchor) {
+      insertionPoint = wishListAnchor;
+      insertionParent = leftCol;
+    } else {
+      const anchor = findAnchorItem(menu, 'Buy on Mana Pool');
+      insertionPoint = anchor || menu.lastElementChild;
+      insertionParent = menu;
+    }
 
     // Create a wrapper for all our injected elements.
     const wrapper = document.createElement('div');
@@ -429,20 +544,33 @@ import { ORACLE_PREFIXES, MENU_KEYWORDS, MAX_VISIBLE } from './shared/constants.
     // Insert after the anchor.
     insertionPoint.after(wrapper);
 
-    // Reset injecting when menu disappears.
+    // Reset state when menu disappears so the next click picks up a fresh card.
     const cleanupObs = new MutationObserver(() => {
       if (!document.body.contains(menu)) {
         cleanupObs.disconnect();
         injecting = false;
+        currentCard = null;
       }
     });
     cleanupObs.observe(document.body, { childList: true, subtree: true });
 
     try {
-      let tags = tagCache.get(cacheKey);
-      if (!tags) {
-        tags = await loadTags(set, cn);
-        tagCache.set(cacheKey, tags);
+      let tags;
+      if (set && cn) {
+        const cacheKey = `${set}/${cn}`;
+        tags = tagCache.get(cacheKey);
+        if (!tags) {
+          tags = await loadTags(set, cn);
+          tagCache.set(cacheKey, tags);
+        }
+      } else {
+        // Card not in deck and Moxfield ID resolution failed — fall back to name.
+        const cacheKey = `name:${name.toLowerCase()}`;
+        tags = tagCache.get(cacheKey);
+        if (!tags) {
+          tags = await loadTagsByName(name);
+          tagCache.set(cacheKey, tags);
+        }
       }
 
       loader.remove();
@@ -460,20 +588,20 @@ import { ORACLE_PREFIXES, MENU_KEYWORDS, MAX_VISIBLE } from './shared/constants.
   }
 
   /**
-   * Find a menu item by its visible text. Returns the top-level item
-   * element (direct child of `menu`) that contains the target text.
+   * Find a menu item by its visible text. Returns the direct child of
+   * `container` that contains the target text.
    */
-  function findAnchorItem(menu, text) {
+  function findAnchorItem(container, text) {
     // Search all descendants for the text.
-    const all = menu.querySelectorAll('*');
+    const all = container.querySelectorAll('*');
     for (const el of all) {
       if (el.textContent?.trim() === text) {
-        // Walk up to the direct child of `menu`.
+        // Walk up to the direct child of `container`.
         let item = el;
-        while (item.parentElement && item.parentElement !== menu) {
+        while (item.parentElement && item.parentElement !== container) {
           item = item.parentElement;
         }
-        if (item.parentElement === menu) return item;
+        if (item.parentElement === container) return item;
       }
     }
     return null;
@@ -499,6 +627,104 @@ import { ORACLE_PREFIXES, MENU_KEYWORDS, MAX_VISIBLE } from './shared/constants.
         }
       );
     });
+  }
+
+  async function loadTagsByName(name) {
+    return new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage(
+        { type: 'fetchTagsByName', name },
+        (resp) => {
+          if (chrome.runtime.lastError) {
+            return reject(new Error(chrome.runtime.lastError.message));
+          }
+          if (resp?.ok) {
+            log(`Tags loaded by name (${name}): ${resp.artTags.length} art, ${resp.cardTags.length} card`);
+            resolve({ artTags: resp.artTags, cardTags: resp.cardTags, cacheLoading: resp.cacheLoading });
+          } else {
+            const err = new Error(resp?.error || 'Tag fetch failed');
+            err.cacheLoading = resp?.cacheLoading;
+            reject(err);
+          }
+        }
+      );
+    });
+  }
+
+  /**
+   * Extract the Moxfield card ID from a dropdown menu's "View Details" link.
+   * Link href format: /cards/{cardId}-{slug}
+   */
+  function extractCardIdFromMenu(menu) {
+    const links = menu.querySelectorAll('a[href*="/cards/"]');
+    for (const link of links) {
+      const id = parseCardIdFromHref(link.getAttribute('href'));
+      if (id) return id;
+    }
+    return null;
+  }
+
+  /**
+   * Look up a card's set/cn via Moxfield API (proxied through page_hook.js).
+   * Returns { set, cn } or null on failure.
+   */
+  function lookupCardByMoxfieldId(cardId) {
+    return new Promise((resolve) => {
+      const requestId = `${cardId}-${Date.now()}`;
+      const timeout = setTimeout(() => {
+        window.removeEventListener('message', handler);
+        log('Card lookup timed out for', cardId);
+        resolve(null);
+      }, 5000);
+
+      function handler(e) {
+        if (e.data?.type !== 'moxtags-card-result' || e.data.requestId !== requestId) return;
+        window.removeEventListener('message', handler);
+        clearTimeout(timeout);
+        if (e.data.error || !e.data.set || !e.data.cn) {
+          log('Card lookup failed:', cardId, e.data.error || 'missing set/cn');
+          resolve(null);
+        } else {
+          log('Card lookup resolved:', cardId, '→', e.data.set, e.data.cn);
+          resolve({ set: e.data.set, cn: e.data.cn });
+        }
+      }
+
+      window.addEventListener('message', handler);
+      window.postMessage({ type: 'moxtags-card-lookup', cardId, requestId });
+    });
+  }
+
+  // ─── Search helpers ─────────────────────────────────────────────────
+
+  /**
+   * Append a tag query to the Moxfield search box and trigger a search.
+   * Returns true if the in-page search was triggered, false if we should
+   * fall back to full-page navigation.
+   */
+  function addToSearchAndRun(query) {
+    const input = document.querySelector('#deckbox-search');
+    if (!input) {
+      warn('Search input not found, falling back to navigation');
+      return false;
+    }
+
+    const current = input.value.trim();
+    const newValue = current ? `${current} ${query}` : query;
+
+    // Use the native value setter so React picks up the change.
+    const nativeSetter = Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype, 'value'
+    ).set;
+    nativeSetter.call(input, newValue);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+
+    // Click the search button next to the input.
+    const form = input.closest('form');
+    const btn = form?.querySelector('button.btn-primary');
+    if (btn) {
+      btn.click();
+    }
+    return true;
   }
 
   // ─── Rendering ─────────────────────────────────────────────────────
@@ -538,19 +764,14 @@ import { ORACLE_PREFIXES, MENU_KEYWORDS, MAX_VISIBLE } from './shared/constants.
     arrow.textContent = '▸';
     trigger.appendChild(arrow);
 
-    const count = document.createElement('span');
-    count.className = 'moxtags-trigger-count';
-    count.textContent = `(${tags.length})`;
-    trigger.appendChild(count);
-
     // Flyout submenu
     const submenu = document.createElement('div');
     submenu.className = 'moxtags-submenu';
 
-    // "Search (N)" button – hidden until checkboxes are ticked.
+    // "Add to Search (N)" button – hidden until checkboxes are ticked.
     const searchBtn = document.createElement('button');
     searchBtn.className = 'moxtags-search-btn';
-    searchBtn.textContent = 'Search';
+    searchBtn.textContent = 'Add to Search';
     searchBtn.style.display = 'none';
     submenu.appendChild(searchBtn);
 
@@ -559,7 +780,7 @@ import { ORACLE_PREFIXES, MENU_KEYWORDS, MAX_VISIBLE } from './shared/constants.
 
     function updateSearchBtn() {
       if (checked.size > 0) {
-        searchBtn.textContent = `Search (${checked.size})`;
+        searchBtn.textContent = `Add to Search (${checked.size})`;
         searchBtn.style.display = '';
       } else {
         searchBtn.style.display = 'none';
@@ -570,6 +791,7 @@ import { ORACLE_PREFIXES, MENU_KEYWORDS, MAX_VISIBLE } from './shared/constants.
       e.stopPropagation();
       const parts = [...checked].map(slug => `${searchPrefix}:${slug}`);
       const q = parts.join(' ');
+      if (addToSearchAndRun(q)) return;
       window.location.href = `${deckUrl}/search?q=${encodeURIComponent(q)}`;
     });
 
@@ -594,9 +816,15 @@ import { ORACLE_PREFIXES, MENU_KEYWORDS, MAX_VISIBLE } from './shared/constants.
       const a = document.createElement('a');
       a.className = 'moxtags-tag-item';
       a.textContent = tag.name;
+      a.title = 'Add to search';
       a.href = `${deckUrl}/search?q=${encodeURIComponent(searchPrefix + ':' + tag.slug)}`;
       a.addEventListener('click', (e) => {
         e.stopPropagation();
+        const query = `${searchPrefix}:${tag.slug}`;
+        if (addToSearchAndRun(query)) {
+          e.preventDefault();
+          return;
+        }
         window.location.href = a.href;
       });
       row.appendChild(a);

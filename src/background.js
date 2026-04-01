@@ -52,6 +52,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       .catch(err => sendResponse({ ok: false, error: err.message }));
     return true;
   }
+  if (msg.type === 'fetchTagsByName') {
+    fetchTagsByName(msg.name)
+      .then(result => sendResponse(result))
+      .catch(err => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
   if (msg.type === 'prefetchDeck') {
     prefetchDeck(msg.cards)
       .then(result => sendResponse(result))
@@ -144,6 +150,36 @@ async function fetchTags(set, number) {
   } catch (err) {
     // If indexes haven't loaded yet, signal that the cache is still loading
     // so the UI can show an appropriate message instead of an error.
+    return { ok: false, error: err.message, cacheLoading: refreshing || !oracleIndex };
+  }
+}
+
+// ─── Tag lookup by card name ─────────────────────────────────────────
+async function fetchTagsByName(name) {
+  try {
+    await ensureIndexes();
+
+    // Use Scryfall's named card API to find the card.
+    // This returns the default printing — used as a fallback when the exact
+    // printing cannot be resolved via the Moxfield card ID.
+    const url = `${SCRYFALL_CARD_API}/named?exact=${encodeURIComponent(name)}`;
+    const resp = await fetch(url, { credentials: 'omit' });
+    if (!resp.ok) {
+      return { ok: false, error: `Scryfall API error: HTTP ${resp.status}` };
+    }
+    const card = await resp.json();
+    const oracleId = card.oracle_id;
+    const illustrationId = card.illustration_id;
+
+    const cardTags = oracleId && oracleIndex
+      ? (oracleIndex.get(oracleId) || [])
+      : [];
+    const artTags = illustrationId && illustrationIndex
+      ? (illustrationIndex.get(illustrationId) || [])
+      : [];
+
+    return { ok: true, artTags, cardTags, cacheLoading: refreshing };
+  } catch (err) {
     return { ok: false, error: err.message, cacheLoading: refreshing || !oracleIndex };
   }
 }

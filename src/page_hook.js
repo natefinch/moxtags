@@ -1,7 +1,7 @@
 // MoxTags – Page Hook (runs in the MAIN world at document_start)
-// Intercepts Moxfield's own deck API responses so the content script
-// can read the full deck JSON (including set/collector_number for every
-// card) even on private decks where direct API calls fail.
+// Intercepts Moxfield's own API responses so the content script
+// can read the full deck JSON and card data (including set/collector_number)
+// even on private decks where direct API calls fail.
 
 (function () {
   'use strict';
@@ -162,6 +162,52 @@
   };
 
   console.log(TAG, 'fetch() and XHR interceptors installed');
+
+  // ─── Card lookup proxy ──────────────────────────────────────────
+  // Content script cannot call Moxfield API directly (Cloudflare blocks
+  // non-browser requests). We proxy the call here in the main world
+  // where we have the user's session cookies.
+  const origFetchForLookup = window.fetch;
+
+  window.addEventListener('message', (e) => {
+    if (e.source !== window || e.data?.type !== 'moxtags-card-lookup') return;
+    const { cardId, requestId } = e.data;
+    if (!cardId) return;
+
+    const url = `https://api2.moxfield.com/v3/cards/rulings/${encodeURIComponent(cardId)}`;
+    console.log(TAG, 'Card lookup request for', cardId);
+
+    origFetchForLookup(url, { credentials: 'include' })
+      .then(resp => {
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        return resp.json();
+      })
+      .then(data => {
+        // The rulings response should contain card info with set/cn.
+        const card = data?.card || data;
+        const set = (card.set || card.setCode || '').toLowerCase();
+        const cn = String(card.cn || card.collector_number || card.collectorNumber || '');
+        console.log(TAG, 'Card lookup result:', cardId, '→', set, cn);
+        window.postMessage({
+          type: 'moxtags-card-result',
+          requestId,
+          cardId,
+          set: set || null,
+          cn: cn || null,
+        });
+      })
+      .catch(err => {
+        console.warn(TAG, 'Card lookup failed for', cardId, ':', err.message);
+        window.postMessage({
+          type: 'moxtags-card-result',
+          requestId,
+          cardId,
+          error: err.message,
+        });
+      });
+  });
+
+  console.log(TAG, 'Card lookup proxy installed');
 
   // ─── Reset on SPA navigation ──────────────────────────────────────
   // When the content script cleans up (SPA navigation to a new deck),

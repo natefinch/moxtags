@@ -60,6 +60,7 @@ These contexts communicate via two mechanisms:
 src/
 ├── shared/               # Pure logic — no browser APIs
 │   ├── autocomplete.js   # Filtering, sorting, highlighting for tag autocomplete
+│   ├── card.js           # parseCardIdFromHref — Moxfield card ID extraction
 │   ├── tags.js           # buildReverseIndex, extractTagNames
 │   ├── deck.js           # buildCardMap — Moxfield deck JSON parsing
 │   └── constants.js      # URLs, prefixes, intervals, menu keywords
@@ -375,20 +376,70 @@ the card was missed), `fetchTags()`
 (`src/background.js`) fetches a single card
 from `https://api.scryfall.com/cards/<set>/<cn>` to resolve its IDs on demand.
 
+### Search Result Cards — Moxfield Card ID Resolution
+
+Cards on the deck search page (`/decks/{id}/search?q=...`) may not be in the
+deck's `cardMap`. For these cards, the extension resolves the exact printing
+via the Moxfield card ID found in the Options dropdown menu:
+
+1. **Extract card ID:** When the Options dropdown appears,
+   `extractCardIdFromMenu()` (`src/content.js`) finds the "View Details" link
+   (e.g. `href="/cards/kyerD-aesthir-glider"`) and extracts the Moxfield
+   card ID (`kyerD`) using `parseCardIdFromHref()` (`src/shared/card.js`).
+
+2. **Proxy lookup via page_hook.js:** The content script sends a
+   `moxtags-card-lookup` message via `window.postMessage` to `page_hook.js`
+   (which runs in the MAIN world and has the user's authenticated session).
+   `page_hook.js` fetches
+   `https://api2.moxfield.com/v3/cards/rulings/{cardId}` and replies with
+   the card's `set` and `cn` via `moxtags-card-result`.
+
+3. **Tag resolution:** With the resolved `set`/`cn`, the normal
+   `loadTags(set, cn)` path is used to fetch tags for the exact printing
+   (correct `illustration_id` for art tags).
+
+4. **Name-only fallback:** If the Moxfield card ID cannot be extracted or
+   the lookup fails, `fetchTagsByName()` (`src/background.js`) queries
+   Scryfall's `/cards/named?exact={name}` endpoint. This returns the default
+   printing, which has correct card tags (`oracle_id`) but may have incorrect
+   art tags (`illustration_id`) for alternate printings.
+
 ---
 
 ## Menu Detection & Tag Injection
 
 ### Click Tracking
 
-The content script listens for `mousedown` events on the document
-(`src/content.js`). When fired, `onMouseDown()`
-(`src/content.js`) calls `identifyCard()`,
-which walks up the DOM from the click target (up to 15 levels), scanning
-each ancestor's children for text that exactly matches a card name in
-`cardMap` (`src/content.js`,
-`src/content.js`). If found, `currentCard` is
+The content script uses two click-tracking strategies:
+
+**Right-click context menus (main deck page):** A `mousedown` listener
+(`src/content.js`) calls `identifyCard()`, which walks up the DOM from the
+click target (up to 15 levels), scanning each ancestor's children for text
+that exactly matches a card name in `cardMap`. If found, `currentCard` is
 set to that card's `{ name, set, cn }` info.
+
+**Options dropdown (search results page):** A separate `mousedown` listener
+watches for clicks on `.dropdown-toggle` elements within `.decklist-card`
+containers (`src/content.js`). It first clears `currentCard` (which may
+have been set incorrectly by the general handler matching a different card
+visible on the page). It then reads the card name from
+`.decklist-card-phantomsearch` and checks `cardMap`. If the card is not in
+the deck, it stores `{ name, set: null, cn: null }` in `lastOptionsCard`.
+When the dropdown appears, `scanForCardDropdown()` prefers
+`lastOptionsCard` over `currentCard` for card identity.
+The exact printing is resolved later when the dropdown appears (see
+[Card Identity Resolution](#card-identity-resolution)).
+
+### Card Dropdown Detection (Search Results)
+
+Moxfield's Options dropdown on search result cards is a React portal appended
+to `<body>`, not inside the card container. `scanForCardDropdown()`
+(`src/content.js`) detects these dropdowns by:
+
+1. Looking for `.dropdown-menu` elements that contain known markers
+   ("Add to Main Deck", "Add to Sideboard").
+2. Matching them against `lastOptionsCard` (set by the click tracker).
+3. Calling `injectTagsIntoMenu()` to add tag submenus.
 
 ### Menu Detection — Three Layers
 
@@ -441,19 +492,25 @@ elements that are part of a previously injected MoxTags section
 1. Debounces via the `injecting` flag to prevent multiple simultaneous
    injections.
 2. Removes any previous `.moxtags-injected` elements from the menu.
-3. Finds the "Buy on Mana Pool" menu item as an insertion anchor via
+3. If `set`/`cn` are missing (search result card not in deck), attempts to
+   resolve the exact printing via `extractCardIdFromMenu()` →
+   `lookupCardByMoxfieldId()` (see
+   [Card Identity Resolution](#card-identity-resolution)).
+4. Finds the "Buy on Mana Pool" menu item as an insertion anchor via
    `findAnchorItem()` (`src/content.js`),
    falling back to the menu's last child.
-4. Creates a wrapper `<div class="moxtags-injected">` with a divider and
+5. Creates a wrapper `<div class="moxtags-injected">` with a divider and
    a "Loading tags…" indicator.
-5. Inserts the wrapper after the anchor element.
-6. Sets up a cleanup observer that resets the `injecting` flag when the
-   menu is removed from the DOM
-   (`src/content.js`).
-7. Looks up tags from `tagCache`; if missing, calls `loadTags()` which
-   sends a `fetchTags` message to the background worker
-   (`src/content.js`).
-8. Replaces the loader with rendered tag submenus via `renderSubmenus()`.
+6. Inserts the wrapper after the anchor element.
+7. Sets up a cleanup observer that resets the `injecting` flag and clears
+   `currentCard` when the menu is removed from the DOM. Clearing
+   `currentCard` ensures the next Options click picks up a fresh card
+   identity from `lastOptionsCard`.
+8. Looks up tags from `tagCache`; if missing, calls `loadTags()` (for
+   cards with `set`/`cn`) or `loadTagsByName()` (name-only fallback)
+   which sends a `fetchTags` or `fetchTagsByName` message to the
+   background worker.
+9. Replaces the loader with rendered tag submenus via `renderSubmenus()`.
 
 ---
 
@@ -472,12 +529,11 @@ builds each trigger as:
 <div class="moxtags-trigger">
   <span class="moxtags-trigger-label">Art Tags</span>
   <span class="moxtags-trigger-arrow">▸</span>
-  <span class="moxtags-trigger-count">(5)</span>
   <div class="moxtags-submenu">
-    <button class="moxtags-search-btn" style="display:none">Search</button>
+    <button class="moxtags-search-btn" style="display:none">Add to Search</button>
     <div class="moxtags-tag-row">
       <input type="checkbox" class="moxtags-tag-cb">
-      <a class="moxtags-tag-item" href="...">tag-name</a>
+      <a class="moxtags-tag-item" href="..." title="Add to search">tag-name</a>
     </div>
     ...
   </div>
@@ -486,12 +542,20 @@ builds each trigger as:
 
 ### Search Links
 
-Each individual tag link navigates to the current deck's search page:
-`{deckUrl}/search?q={prefix}:{slug}` (e.g.
-`/decks/abc123/search?q=otag:ramp`).
+Clicking an individual tag link appends the tag query (e.g. `otag:ramp` or
+`art:forest`) to the Moxfield search box (`#deckbox-search`) and triggers a
+search by clicking the adjacent search button. This avoids a full page
+reload. Each link has `title="Add to search"` for discoverability. If the
+search box is not found (e.g. on a non-deck page), the link falls back to
+full navigation: `{deckUrl}/search?q={prefix}:{slug}`.
 
-The multi-select "Search (N)" button combines all checked tags:
-`{deckUrl}/search?q={prefix}:{slug1} {prefix}:{slug2} ...`
+The multi-select "Add to Search (N)" button works the same way — it
+combines all checked tags into a single query string
+(`{prefix}:{slug1} {prefix}:{slug2} ...`) and appends it to the search box.
+
+To set the search input value in a way that React recognises, the code uses
+the native `HTMLInputElement.prototype.value` setter and dispatches an
+`input` event with `bubbles: true`. This is handled by `addToSearchAndRun()`
 (`src/content.js`).
 
 ### Flyout Positioning
@@ -661,10 +725,21 @@ All messages use `chrome.runtime.sendMessage` with a `type` field.
 |------------------|---------------|------------|------------------------------------------|--------------------------------------------------|
 | `fetch`          | `content.js`  | `background.js` | `{ url, options? }`                 | `{ ok, body?, error?, status? }`                 |
 | `fetchTags`      | `content.js`  | `background.js` | `{ set, number }`                   | `{ ok, artTags?, cardTags?, error? }`            |
+| `fetchTagsByName`| `content.js`  | `background.js` | `{ name }`                          | `{ ok, artTags?, cardTags?, error? }`            |
 | `prefetchDeck`   | `content.js`  | `background.js` | `{ cards: [{ set, cn }] }`          | `{ ok, tags?: { "set/cn": { artTags, cardTags } }, error? }` |
 | `getTagNames`    | `content.js`  | `background.js` | (none)                               | `{ ok, oracleTagNames?: string[], artTagNames?: string[], error? }` |
 | `getStatus`      | `popup.js`    | `background.js` | (none)                               | `{ refreshing, tagDataTimestamp, oracleCount, illustrationCount, lastError }` |
 | `refreshTags`    | `popup.js`    | `background.js` | (none)                               | `{ ok, error? }`                                 |
+
+### Cross-World Messages (window.postMessage)
+
+These messages pass between `content.js` (ISOLATED world) and `page_hook.js`
+(MAIN world) via `window.postMessage`:
+
+| Message Type              | Sender        | Receiver       | Payload                          | Response Payload                     |
+|---------------------------|---------------|----------------|----------------------------------|--------------------------------------|
+| `moxtags-card-lookup`     | `content.js`  | `page_hook.js` | `{ cardId, requestId }`          | —                                    |
+| `moxtags-card-result`     | `page_hook.js`| `content.js`   | `{ cardId, requestId, set, cn }` | — (or `{ error }` on failure)        |
 
 All message handlers in `src/background.js`
 return `true` from the `onMessage` listener to indicate asynchronous
@@ -686,6 +761,17 @@ return `true` from the `onMessage` listener to indicate asynchronous
   `sideboard`, `commanders`, etc.), each containing card entries with `name`,
   `set`, and `cn`/`collector_number` fields.
 
+### Moxfield Card Rulings API
+
+- **Endpoint:** `GET https://api2.moxfield.com/v3/cards/rulings/{cardId}`
+- **Auth:** Requires the user's authenticated session (Cloudflare + cookies).
+  Called from `page_hook.js` (MAIN world) which has access to the user's
+  session.
+- **Used when:** Resolving a Moxfield card ID (e.g. `kyerD`) to its `set`
+  and `cn` for search result cards not in the deck.
+- **Response shape:** JSON object containing card data with `set` and
+  `cn`/`collector_number` fields.
+
 ### Scryfall Tag Data API
 
 - **Oracle tags:** `GET https://api.scryfall.com/private/tags/oracle`
@@ -705,6 +791,16 @@ return `true` from the `onMessage` listener to indicate asynchronous
 - **Endpoint:** `GET https://api.scryfall.com/cards/{set}/{collector_number}`
 - **Used when:** A card is not in the prefetch cache (edge case / fallback).
 
+### Scryfall Named Card API (fallback only)
+
+- **Endpoint:** `GET https://api.scryfall.com/cards/named?exact={name}`
+- **Used when:** A card's `set`/`cn` cannot be resolved (e.g. Moxfield card
+  ID lookup failed). Returns the default printing.
+- **Response:** Standard Scryfall card object with `oracle_id`,
+  `illustration_id`, etc.
+- **Note:** Art tags may be incorrect for alternate printings since the
+  default printing's `illustration_id` is used.
+
 ---
 
 ## Data Flow Diagram
@@ -716,26 +812,26 @@ return `true` from the `onMessage` listener to indicate asynchronous
 │  ┌──────────────────┐     DOM element     ┌──────────────┐ │
 │  │  page_hook.js    │ ──────────────────► │  content.js   │ │
 │  │  (MAIN world)    │  <script> + attr    │  (ISOLATED)   │ │
-│  │                  │                      │               │ │
-│  │  Intercepts      │                      │  Reads deck   │ │
-│  │  fetch/XHR       │                      │  Detects menu │ │
+│  │                  │ ◄──────────────────►│               │ │
+│  │  Intercepts      │   postMessage       │  Reads deck   │ │
+│  │  fetch/XHR       │  (card ID lookup)   │  Detects menu │ │
 │  │  responses       │                      │  Injects tags │ │
-│  └──────────────────┘                      └───────┬───────┘ │
-│                                                     │        │
-└─────────────────────────────────────────────────────┼────────┘
-                                                      │
-                                     chrome.runtime.sendMessage
-                                                      │
-                                                      ▼
-                                          ┌───────────────────┐
-                                          │  background.js     │
-                                          │  (Service Worker)  │
-                                          │                    │
-                                          │  • Proxy fetch     │
-                                          │  • Tag indexes     │
-                                          │  • Card ID cache   │
-                                          │  • Batch prefetch  │
-                                          └────────┬──────────┘
+│  └────────┬─────────┘                      └───────┬───────┘ │
+│           │                                        │        │
+└───────────┼────────────────────────────────────────┼────────┘
+            │                                        │
+       fetch()                      chrome.runtime.sendMessage
+     (card rulings)                                  │
+            │                                        ▼
+            ▼                            ┌───────────────────┐
+   ┌──────────────┐                      │  background.js     │
+   │ Moxfield API │                      │  (Service Worker)  │
+   │ /v3/cards/   │                      │                    │
+   │  rulings/*   │                      │  • Proxy fetch     │
+   └──────────────┘                      │  • Tag indexes     │
+                                         │  • Card ID cache   │
+                                         │  • Batch prefetch  │
+                                         └────────┬──────────┘
                                                    │
                                               fetch()
                                                    │

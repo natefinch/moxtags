@@ -1,0 +1,24 @@
+MoxTags brings Scryfall Tagger's community-curated labels directly into your Moxfield deck building experience.
+
+When building a deck, finding the right cards to fill a role can be surprisingly difficult. You know you need more ramp, removal, or another sacrifice outlet — but crafting the perfect search query is frustrating. Cards that do similar things are often worded completely differently, and even a carefully written search will miss options you didn't think to look for.
+
+Scryfall's Tagger system solves this. Thousands of Magic: The Gathering cards have been labeled by the community with intuitive functional descriptors like "ramp," "card-draw," "sacrifice-outlet," "board-wipe," and hundreds more. These labels capture what a card does, not just what it says — letting you find cards by role rather than guessing every possible wording.
+
+The problem? Moxfield doesn't surface this data anywhere, forcing you to switch back and forth between sites. MoxTags eliminates that friction entirely.
+
+How it works:
+
+Right-click any card in your deck list to see two new context menu submenus — one for art-specific labels (tied to a particular printing and illustration) and one for functional labels (describing mechanical role, shared across all printings).
+
+Each submenu lists every associated label from Scryfall Tagger. Click one to instantly search your deck for other cards that share it. You can also check multiple entries and search for the combination — perfect for narrowing down exactly the kind of card you need.
+
+For example, right-click your Commander and see that it's labeled "sacrifice-outlet" and "aristocrats." Click either to discover which other cards in your deck share those synergies, or head to Scryfall to search the full database for more options.
+
+Key features:
+
+• Art and functional labels for every card, right in the context menu
+• Multi-label search — check several entries and find cards matching any combination
+• Works with private decks — reads your deck data as the page loads
+• Printing-aware — different printings can have different art labels, and MoxTags respects which version is in your deck
+• Fast and lightweight — data is cached locally and refreshed daily, so lookups are nearly instant
+• No account required — uses Scryfall's public data and doesn't require you to log into anything
