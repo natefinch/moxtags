@@ -843,27 +843,40 @@ import { parseCardIdFromHref } from './shared/card.js';
   }
 
   function positionSubmenu(trigger, submenu) {
-    // Reset to default (right side).
-    submenu.style.left = '100%';
+    // Measure the submenu before it becomes visible so we can place it on
+    // the correct side without a flash.
+    submenu.style.display = 'block';
+    submenu.style.visibility = 'hidden';
+    submenu.style.left = '0';
     submenu.style.right = '';
     submenu.style.top = '0';
 
-    requestAnimationFrame(() => {
-      const triggerRect = trigger.getBoundingClientRect();
-      const subRect = submenu.getBoundingClientRect();
+    const triggerRect = trigger.getBoundingClientRect();
+    const subWidth = submenu.offsetWidth;
+    const subHeight = submenu.offsetHeight;
 
-      // Flip to left if it overflows to the right.
-      if (triggerRect.right + subRect.width > window.innerWidth - 10) {
-        submenu.style.left = '';
-        submenu.style.right = '100%';
-      }
+    const spaceRight = window.innerWidth - triggerRect.right - 10;
+    const spaceLeft = triggerRect.left - 10;
 
-      // Shift up if it overflows at the bottom.
-      const overflow = subRect.bottom - window.innerHeight + 10;
-      if (overflow > 0) {
-        submenu.style.top = -overflow + 'px';
-      }
-    });
+    // Open on the side with more room (prefer right).
+    // Must use 'auto' (not '') to override the CSS default left:100%.
+    if (subWidth > spaceRight && spaceLeft > spaceRight) {
+      submenu.style.left = 'auto';
+      submenu.style.right = '100%';
+    } else {
+      submenu.style.left = '100%';
+      submenu.style.right = 'auto';
+    }
+
+    // Shift up if it overflows at the bottom.
+    const overflow = (triggerRect.top + subHeight) - window.innerHeight + 10;
+    if (overflow > 0) {
+      submenu.style.top = -overflow + 'px';
+    }
+
+    // Restore — CSS :hover keeps the submenu visible.
+    submenu.style.display = '';
+    submenu.style.visibility = '';
   }
 
   // ─── Change Tags dialog injection ──────────────────────────────────
