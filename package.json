@@ -8,10 +8,15 @@
     "build": "node build.js",
     "build:chrome": "node build.js chrome",
     "build:firefox": "node build.js firefox",
+    "upload:chrome": "node build.js chrome && chrome-webstore-upload upload --source dist/chrome/ --extension-id baekakabcmcpmhoonggddlmikdcnmkni",
+    "sign:firefox": "node build.js firefox && web-ext sign --source-dir=dist/firefox/ --artifacts-dir=web-ext-artifacts/ --channel=unlisted --api-key=\"$AMO_JWT_ISSUER\" --api-secret=\"$AMO_JWT_SECRET\"",
     "watch": "node build.js --watch",
     "test": "node --test tests/*.test.js"
   },
   "devDependencies": {
-    "esbuild": "^0.25.0"
+    "chrome-webstore-upload-cli": "^3.5.0",
+    "esbuild": "^0.25.0",
+    "linkedom": "^0.18.12",
+    "web-ext": "^10.1.0"
   }
 }

@@ -61,31 +61,45 @@ function renderStatus(resp) {
     refreshBtn.textContent = 'Refresh tag data now';
   }
 
-  // Build detail lines.
-  let html = '';
+  // Build detail lines using DOM methods (avoids innerHTML for AMO compliance).
+  details.textContent = '';
 
   if (resp.tagDataTimestamp) {
     const date = new Date(resp.tagDataTimestamp);
     const ago = timeAgo(resp.tagDataTimestamp);
-    html += `<div class="detail"><strong>Last downloaded:</strong> ${ago}</div>`;
-    html += `<div class="detail" style="font-size:11px; color:#7f849c;">${date.toLocaleString()}</div>`;
+    details.append(detailLine('Last downloaded:', ' ' + ago));
+    const dateDiv = document.createElement('div');
+    dateDiv.className = 'detail';
+    dateDiv.style.fontSize = '11px';
+    dateDiv.style.color = '#7f849c';
+    dateDiv.textContent = date.toLocaleString();
+    details.append(dateDiv);
   }
 
   if (resp.oracleCount != null) {
-    html += `<div class="detail"><strong>Oracle IDs indexed:</strong> ${resp.oracleCount.toLocaleString()}</div>`;
+    details.append(detailLine('Oracle IDs indexed:', ' ' + resp.oracleCount.toLocaleString()));
   }
   if (resp.illustrationCount != null) {
-    html += `<div class="detail"><strong>Illustration IDs indexed:</strong> ${resp.illustrationCount.toLocaleString()}</div>`;
+    details.append(detailLine('Illustration IDs indexed:', ' ' + resp.illustrationCount.toLocaleString()));
   }
 
   if (resp.lastError) {
-    html += `<div class="detail" style="color:#f38ba8;"><strong>Last error:</strong> ${escapeHtml(resp.lastError)}</div>`;
+    const div = detailLine('Last error:', ' ' + resp.lastError);
+    div.style.color = '#f38ba8';
+    details.append(div);
   }
-
-  details.innerHTML = html;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────
+function detailLine(label, value) {
+  const div = document.createElement('div');
+  div.className = 'detail';
+  const strong = document.createElement('strong');
+  strong.textContent = label;
+  div.append(strong, value);
+  return div;
+}
+
 function timeAgo(ts) {
   const seconds = Math.floor((Date.now() - ts) / 1000);
   if (seconds < 60)   return 'just now';
@@ -97,8 +111,4 @@ function timeAgo(ts) {
   return `${days}d ${hours % 24}h ago`;
 }
 
-function escapeHtml(str) {
-  const el = document.createElement('span');
-  el.textContent = str;
-  return el.innerHTML;
-}
+

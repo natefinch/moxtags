@@ -68,6 +68,19 @@ div.dropdown-menu.show
 ```
 MoxTags injects after "Buy on Mana Pool", falling back to the last child.
 
+### Search Results Long Layout
+```
+div.row.justify-content-center
+  div.col-12.col-md-auto          ← card image (a[href="/cards/{id}-slug"] > img.img-card)
+  div.col-12.col-md               ← card details (h3 > a, type, text, price)
+  div.col-9.col-sm-7.col-md-3     ← action buttons
+    div.mb-2 > button "Add to Main Deck"
+    div.mb-2 > button "Add to Sideboard"
+    div.mb-2 > button "Add to Considering"
+    button "More Options ▾"
+```
+MoxTags adds "Art Tags" and "Card Tags" buttons after "More Options", styled with Bootstrap classes (`btn btn-secondary w-100`) to match. Each opens a dropdown popup with tags loaded lazily on first click. Card identity is extracted from the `/cards/{id}-slug` link in the row.
+
 ## Card Identity Resolution
 
 Two tracking mechanisms identify which card was clicked:
@@ -84,3 +97,7 @@ For search result cards not in the deck, the exact printing is resolved by extra
 - **Art tags**: prefix `art:` — Scryfall illustration tags (specific to a card's artwork)
 - **Card tags**: prefix `otag:` — Scryfall oracle tags (shared across printings)
 - Tag indexes: `api.scryfall.com/private/tags/oracle` and `.../illustration`
+
+## Styling Guidelines
+
+When injecting UI elements, prefer Moxfield's existing Bootstrap utility classes (`btn`, `btn-secondary`, `btn-primary`, `w-100`, `dropdown-menu`, `dropdown-item`, `mt-2`, `ms-1`, etc.) over custom CSS. This keeps injected elements visually consistent with surrounding Moxfield components and adapts to theme changes automatically. Only add custom `moxtags-*` CSS classes for behavior that Bootstrap doesn't cover (positioning, state toggling, scroll constraints).

@@ -5,6 +5,7 @@ import { buildCardMap } from './shared/deck.js';
 import { filterAndSortTags, parseInput, renderCount, highlightTag } from './shared/autocomplete.js';
 import { ORACLE_PREFIXES, MENU_KEYWORDS, MAX_VISIBLE } from './shared/constants.js';
 import { parseCardIdFromHref } from './shared/card.js';
+import { findUnprocessedMoreOptionsButtons, extractCardInfoFromRow } from './shared/longlayout.js';
 
 (function () {
   'use strict';
@@ -293,6 +294,7 @@ import { parseCardIdFromHref } from './shared/card.js';
         scanForMenu(node);
         scanForDialog(node);
         scanForCardDropdown(node);
+        scanForLongLayout(node);
       }
       // Also check attribute changes – menus may be shown/hidden via style.
       if (mut.type === 'attributes' && mut.target?.nodeType === Node.ELEMENT_NODE) {
@@ -477,6 +479,219 @@ import { parseCardIdFromHref } from './shared/card.js';
     return root;
   }
 
+  // ─── Long layout detection & injection ──────────────────────────────
+  // Search results "long" layout: each card is a full-width row with
+  // action buttons in a side column (Add to Main Deck, More Options, …).
+  // The standard dropdown-menu injection doesn't apply, so we add
+  // standalone "Art Tags" / "Card Tags" buttons after "More Options".
+
+  function scanForLongLayout(el) {
+    for (const { button, row } of findUnprocessedMoreOptionsButtons(el)) {
+      injectLongLayoutButtons(button, row);
+    }
+  }
+
+  function injectLongLayoutButtons(moreOptionsBtn, cardRow) {
+    const { moxCardId, cardName } = extractCardInfoFromRow(cardRow);
+    if (!moxCardId && !cardName) return;
+
+    const wrapper = document.createElement('div');
+    wrapper.className = 'moxtags-long-btn-wrapper moxtags-injected mt-2';
+
+    wrapper.appendChild(buildLongLayoutTagButton('Art Tags', 'art', moxCardId, cardName));
+    wrapper.appendChild(buildLongLayoutTagButton('Card Tags', 'otag', moxCardId, cardName));
+
+    moreOptionsBtn.after(wrapper);
+  }
+
+  function buildLongLayoutTagButton(title, searchPrefix, moxCardId, cardName) {
+    const container = document.createElement('div');
+    container.className = 'moxtags-long-tag-container mt-2';
+
+    const btn = document.createElement('button');
+    btn.className = 'btn w-100 btn-secondary';
+    btn.type = 'button';
+    const btnLabel = document.createElement('span');
+    btnLabel.textContent = title;
+    const caret = document.createElement('span');
+    caret.className = 'fa-solid fa-caret-down ms-1';
+    caret.setAttribute('aria-hidden', 'true');
+    btnLabel.appendChild(caret);
+    btn.appendChild(btnLabel);
+    container.appendChild(btn);
+
+    const menu = document.createElement('div');
+    menu.className = 'dropdown-menu moxtags-long-menu';
+    container.appendChild(menu);
+
+    let loaded = false;
+
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+
+      // Close other open long-layout menus.
+      document.querySelectorAll('.moxtags-long-menu.show').forEach(m => {
+        if (m !== menu) m.classList.remove('show');
+      });
+
+      if (menu.classList.contains('show')) {
+        menu.classList.remove('show');
+        return;
+      }
+
+      menu.classList.add('show');
+
+      if (loaded) return;
+      loaded = true;
+
+      // Show loading state.
+      menu.innerHTML = '';
+      const loader = document.createElement('div');
+      loader.className = 'moxtags-loading text-body';
+      loader.textContent = 'Loading tags…';
+      menu.appendChild(loader);
+
+      // Resolve card identity.
+      let set, cn;
+      const cardInfo = cardName ? cardMap.get(cardName.toLowerCase()) : null;
+      if (cardInfo) {
+        set = cardInfo.set;
+        cn = cardInfo.cn;
+      } else if (moxCardId) {
+        const resolved = await lookupCardByMoxfieldId(moxCardId);
+        if (resolved) {
+          set = resolved.set;
+          cn = resolved.cn;
+        }
+      }
+
+      // Fetch tags.
+      let tags;
+      try {
+        if (set && cn) {
+          const cacheKey = `${set}/${cn}`;
+          tags = tagCache.get(cacheKey);
+          if (!tags) {
+            tags = await loadTags(set, cn);
+            tagCache.set(cacheKey, tags);
+          }
+        } else if (cardName) {
+          const cacheKey = `name:${cardName.toLowerCase()}`;
+          tags = tagCache.get(cacheKey);
+          if (!tags) {
+            tags = await loadTagsByName(cardName);
+            tagCache.set(cacheKey, tags);
+          }
+        }
+      } catch (err) {
+        error('Long layout tag fetch failed:', err);
+        loader.textContent = err.cacheLoading ? 'Downloading tag data…' : 'Failed to load tags';
+        loaded = false; // allow retry
+        return;
+      }
+
+      loader.remove();
+
+      const relevantTags = searchPrefix === 'art' ? tags?.artTags : tags?.cardTags;
+
+      if (!relevantTags || relevantTags.length === 0) {
+        const empty = document.createElement('div');
+        if (tags?.cacheLoading) {
+          empty.className = 'moxtags-loading moxtags-cache-loading text-body';
+          empty.textContent = 'Downloading tag data…';
+          loaded = false;
+        } else {
+          empty.className = 'moxtags-empty text-body';
+          empty.textContent = 'No tags found';
+        }
+        menu.appendChild(empty);
+        return;
+      }
+
+      renderLongMenuTags(menu, relevantTags, searchPrefix);
+    });
+
+    return container;
+  }
+
+  // Single delegated listener to close long-layout menus on outside clicks.
+  document.addEventListener('click', (e) => {
+    for (const menu of document.querySelectorAll('.moxtags-long-menu.show')) {
+      if (!menu.parentElement?.contains(e.target)) {
+        menu.classList.remove('show');
+      }
+    }
+  });
+
+  function renderLongMenuTags(menu, tags, searchPrefix) {
+    const searchBtn = document.createElement('button');
+    searchBtn.className = 'moxtags-search-btn';
+    searchBtn.textContent = 'Add to Search';
+    searchBtn.style.display = 'none';
+    menu.appendChild(searchBtn);
+
+    const checked = new Set();
+
+    function updateSearchBtn() {
+      if (checked.size > 0) {
+        searchBtn.textContent = `Add to Search (${checked.size})`;
+        searchBtn.style.display = '';
+      } else {
+        searchBtn.style.display = 'none';
+      }
+    }
+
+    searchBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const parts = [...checked].map(slug => `${searchPrefix}:${slug}`);
+      const q = parts.join(' ');
+      if (addToSearchAndRun(q)) {
+        menu.classList.remove('show');
+        return;
+      }
+      const base = deckUrl ? `${deckUrl}/search` : '/search/cards';
+      window.location.href = `${base}?q=${encodeURIComponent(q)}`;
+    });
+
+    for (const tag of tags) {
+      const row = document.createElement('div');
+      row.className = 'moxtags-tag-row';
+
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.className = 'moxtags-tag-cb';
+      cb.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (cb.checked) checked.add(tag.slug);
+        else checked.delete(tag.slug);
+        updateSearchBtn();
+      });
+      row.appendChild(cb);
+
+      const a = document.createElement('a');
+      a.className = 'dropdown-item moxtags-tag-item';
+      a.textContent = tag.name;
+      a.title = 'Add to search';
+      const tagUrl = deckUrl
+        ? `${deckUrl}/search?q=${encodeURIComponent(searchPrefix + ':' + tag.slug)}`
+        : `/search/cards?q=${encodeURIComponent(searchPrefix + ':' + tag.slug)}`;
+      a.href = tagUrl;
+      a.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const query = `${searchPrefix}:${tag.slug}`;
+        if (addToSearchAndRun(query)) {
+          e.preventDefault();
+          menu.classList.remove('show');
+          return;
+        }
+        window.location.href = a.href;
+      });
+      row.appendChild(a);
+
+      menu.appendChild(row);
+    }
+  }
+
   // ─── Tag injection ─────────────────────────────────────────────────
   async function injectTagsIntoMenu(menu) {
     // Debounce: multiple detection paths may fire simultaneously.
@@ -532,12 +747,12 @@ import { parseCardIdFromHref } from './shared/card.js';
 
     // Divider
     const divider = document.createElement('div');
-    divider.className = 'moxtags-divider';
+    divider.className = 'dropdown-divider';
     wrapper.appendChild(divider);
 
     // Loading indicator
     const loader = document.createElement('div');
-    loader.className = 'moxtags-loading';
+    loader.className = 'moxtags-loading text-body';
     loader.textContent = 'Loading tags…';
     wrapper.appendChild(loader);
 
@@ -732,10 +947,10 @@ import { parseCardIdFromHref } from './shared/card.js';
     if (tags.artTags.length === 0 && tags.cardTags.length === 0) {
       const empty = document.createElement('div');
       if (tags.cacheLoading) {
-        empty.className = 'moxtags-loading moxtags-cache-loading';
+        empty.className = 'moxtags-loading moxtags-cache-loading text-body';
         empty.textContent = 'Downloading tag data…';
       } else {
-        empty.className = 'moxtags-empty';
+        empty.className = 'moxtags-empty text-body';
         empty.textContent = 'No tags found';
       }
       wrapper.appendChild(empty);
@@ -752,7 +967,7 @@ import { parseCardIdFromHref } from './shared/card.js';
 
   function buildSubmenuTrigger(title, tags, searchPrefix) {
     const trigger = document.createElement('div');
-    trigger.className = 'moxtags-trigger';
+    trigger.className = 'dropdown-item cursor-pointer no-outline moxtags-trigger';
 
     const label = document.createElement('span');
     label.className = 'moxtags-trigger-label';
@@ -766,7 +981,7 @@ import { parseCardIdFromHref } from './shared/card.js';
 
     // Flyout submenu
     const submenu = document.createElement('div');
-    submenu.className = 'moxtags-submenu';
+    submenu.className = 'dropdown-menu moxtags-submenu';
 
     // "Add to Search (N)" button – hidden until checkboxes are ticked.
     const searchBtn = document.createElement('button');
@@ -814,7 +1029,7 @@ import { parseCardIdFromHref } from './shared/card.js';
       row.appendChild(cb);
 
       const a = document.createElement('a');
-      a.className = 'moxtags-tag-item';
+      a.className = 'dropdown-item moxtags-tag-item';
       a.textContent = tag.name;
       a.title = 'Add to search';
       a.href = `${deckUrl}/search?q=${encodeURIComponent(searchPrefix + ':' + tag.slug)}`;

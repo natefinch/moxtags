@@ -61,6 +61,7 @@ src/
 ├── shared/               # Pure logic — no browser APIs
 │   ├── autocomplete.js   # Filtering, sorting, highlighting for tag autocomplete
 │   ├── card.js           # parseCardIdFromHref — Moxfield card ID extraction
+│   ├── longlayout.js     # Long layout detection & card info extraction
 │   ├── tags.js           # buildReverseIndex, extractTagNames
 │   ├── deck.js           # buildCardMap — Moxfield deck JSON parsing
 │   └── constants.js      # URLs, prefixes, intervals, menu keywords
@@ -441,6 +442,60 @@ to `<body>`, not inside the card container. `scanForCardDropdown()`
 2. Matching them against `lastOptionsCard` (set by the click tracker).
 3. Calling `injectTagsIntoMenu()` to add tag submenus.
 
+### Long Layout Detection (Search Results)
+
+Moxfield's deck search results have an alternative "long" layout where each
+card is displayed as a full-width row with action buttons in a side column
+(Add to Main Deck, Add to Sideboard, Add to Considering, More Options). The
+standard dropdown-menu injection does not apply because there is no dropdown
+menu to inject into.
+
+Instead, `scanForLongLayout()` (`src/content.js`) runs on each DOM mutation
+and uses `findUnprocessedMoreOptionsButtons()` (`src/shared/longlayout.js`)
+to find "More Options" buttons that haven't been processed yet. For each
+match, `injectLongLayoutButtons()` creates two standalone buttons — "Art Tags"
+and "Card Tags" — inserted after the "More Options" button. The buttons are
+styled to match Moxfield's existing buttons using Bootstrap utility classes
+(`btn btn-secondary w-100`) with a caret-down icon, consistent with the
+"More Options" button.
+
+**Card identity** is extracted by `extractCardInfoFromRow()`
+(`src/shared/longlayout.js`), which reads the Moxfield card ID from the
+`/cards/{id}-slug` link in the card row and the card name from the `img.alt`
+or `h3` link text.
+
+**Lazy tag loading:** Tags are not fetched when the buttons are rendered.
+Instead, clicking a button for the first time triggers tag resolution
+(Moxfield card ID → `set`/`cn` via `lookupCardByMoxfieldId()`, then
+`loadTags()` or `loadTagsByName()` for the tag data). Subsequent clicks
+show the cached tags immediately.
+
+**Popup menu:** Each button opens a dropdown menu (using the `dropdown-menu`
+Bootstrap class for theme consistency) containing tag rows with checkboxes
+and an "Add to Search" batch button, reusing the same tag row layout as the
+flyout submenus. A single delegated `click` listener on `document` closes
+open menus when clicking outside, avoiding per-button listener accumulation.
+
+#### Long Layout DOM Structure
+
+```
+div.row.justify-content-center
+  div.col-12.col-md-auto          ← card image (a[href="/cards/{id}-slug"] > img.img-card)
+  div.col-12.col-md               ← card details (h3 > a, type line, oracle text, price)
+  div.col-9.col-sm-7.col-md-3     ← action buttons
+    div.mb-2 > button "Add to Main Deck"
+    div.mb-2 > button "Add to Sideboard"
+    div.mb-2 > button "Add to Considering"
+    button "More Options ▾"
+    div.moxtags-long-btn-wrapper   ← INJECTED by MoxTags
+      div.moxtags-long-tag-container
+        button "Art Tags ▾"
+        div.dropdown-menu.moxtags-long-menu  ← tag popup
+      div.moxtags-long-tag-container
+        button "Card Tags ▾"
+        div.dropdown-menu.moxtags-long-menu  ← tag popup
+```
+
 ### Menu Detection — Three Layers
 
 Moxfield renders context menus dynamically (likely via React portals). The
@@ -575,6 +630,15 @@ a dark theme to match Moxfield's UI:
   `#7c3aed`)
 - Thin custom scrollbar for the submenu
 - Hover highlights via `rgba(255, 255, 255, 0.08)` backgrounds
+
+Where possible, injected elements reuse Moxfield's existing Bootstrap utility
+classes (e.g. `btn`, `btn-secondary`, `w-100`, `dropdown-menu`, `dropdown-item`,
+`mt-2`, `ms-1`) rather than defining custom CSS. This keeps injected UI
+visually consistent with the surrounding Moxfield components and adapts
+automatically to Moxfield theme changes. Custom `moxtags-*` classes are only
+added for positioning, state toggling, and layout that Bootstrap does not
+cover (e.g. `.moxtags-long-menu.show` for dropdown visibility,
+`.moxtags-submenu` for flyout positioning).
 
 ---
 

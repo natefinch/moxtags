@@ -3,28 +3,44 @@ set -euo pipefail
 
 # MoxTags Release Script
 # Creates a git tag, builds the extension for Chrome and Firefox,
-# packages both into zips, and uploads them to GitHub as a draft release.
+# signs the Firefox extension via AMO, uploads Chrome to the Web Store,
+# packages release assets, and creates a draft GitHub release.
 #
 # By default, increments the minor version (e.g. v1.4.2 → v1.5.0).
 # Use --patch to increment only the patch version (e.g. v1.4.2 → v1.4.3).
+# Use --skip-chrome to skip Chrome Web Store upload/publish (GitHub-only release).
 # Use --dryrun to preview what would happen without making any changes.
 #
+# Required environment variables:
+#   AMO_JWT_ISSUER       — AMO API key (from https://addons.mozilla.org/developers/addon/api/key/)
+#   AMO_JWT_SECRET       — AMO API secret
+#   CHROME_CLIENT_ID     — Google API OAuth2 client ID (not required with --skip-chrome)
+#   CHROME_CLIENT_SECRET — Google API OAuth2 client secret (not required with --skip-chrome)
+#   CHROME_REFRESH_TOKEN — Google API OAuth2 refresh token (not required with --skip-chrome)
+#
 # Usage:
-#   ./release.sh                   # bump minor version
-#   ./release.sh --patch           # bump patch version
-#   ./release.sh --dryrun          # preview minor bump
-#   ./release.sh --patch --dryrun  # preview patch bump
+#   ./release.sh                        # bump minor version
+#   ./release.sh --patch                # bump patch version
+#   ./release.sh --skip-chrome          # skip Chrome Web Store submission
+#   ./release.sh --dryrun               # preview minor bump
+#   ./release.sh --patch --dryrun       # preview patch bump
+
+# --- Constants ---
+
+CHROME_EXTENSION_ID="baekakabcmcpmhoonggddlmikdcnmkni"
 
 # --- Argument parsing ---
 
 BUMP="minor"
 DRYRUN=false
+SKIP_CHROME=false
 for arg in "$@"; do
   case "$arg" in
-    --patch)  BUMP="patch" ;;
-    --dryrun) DRYRUN=true ;;
+    --patch)       BUMP="patch" ;;
+    --skip-chrome) SKIP_CHROME=true ;;
+    --dryrun)      DRYRUN=true ;;
     *)
-      echo "Usage: $0 [--patch] [--dryrun]"
+      echo "Usage: $0 [--patch] [--skip-chrome] [--dryrun]"
       echo "  Unknown argument: $arg"
       exit 1
       ;;
@@ -49,7 +65,14 @@ if $DRYRUN; then
   echo ""
   echo "[dry run] Would create tag: $TAG"
   echo "[dry run] Would build Chrome and Firefox extensions"
-  echo "[dry run] Would create zips: moxtags-chrome-${TAG}.zip, moxtags-firefox-${TAG}.zip"
+  echo "[dry run] Would sign Firefox extension via AMO (unlisted)"
+  if ! $SKIP_CHROME; then
+    echo "[dry run] Would upload Chrome extension to Chrome Web Store"
+  else
+    echo "[dry run] Skipping Chrome Web Store upload (--skip-chrome)"
+  fi
+  echo "[dry run] Would create: moxtags-chrome-${TAG}.zip, moxtags-firefox-${TAG}.xpi"
+  echo "[dry run] Would create draft GitHub release with both assets"
   echo ""
   echo "[dry run] No changes made."
   exit 0
@@ -69,6 +92,26 @@ fi
 
 if ! command -v node &>/dev/null; then
   echo "Error: node is required."
+  exit 1
+fi
+
+# Check store credentials
+missing=()
+[[ -z "${AMO_JWT_ISSUER:-}" ]]       && missing+=("AMO_JWT_ISSUER")
+[[ -z "${AMO_JWT_SECRET:-}" ]]       && missing+=("AMO_JWT_SECRET")
+if ! $SKIP_CHROME; then
+  [[ -z "${CHROME_CLIENT_ID:-}" ]]     && missing+=("CHROME_CLIENT_ID")
+  [[ -z "${CHROME_CLIENT_SECRET:-}" ]] && missing+=("CHROME_CLIENT_SECRET")
+  [[ -z "${CHROME_REFRESH_TOKEN:-}" ]] && missing+=("CHROME_REFRESH_TOKEN")
+fi
+if (( ${#missing[@]} > 0 )); then
+  echo "Error: missing required environment variables:"
+  printf '  %s\n' "${missing[@]}"
+  echo ""
+  echo "AMO credentials:    https://addons.mozilla.org/developers/addon/api/key/"
+  if ! $SKIP_CHROME; then
+    echo "Chrome credentials: https://developer.chrome.com/docs/webstore/using-api"
+  fi
   exit 1
 fi
 
@@ -124,6 +167,58 @@ node -e "
 echo "Building extensions..."
 node build.js
 
+# --- Package Chrome zip (needed for CWS upload and GitHub release) ---
+
+CHROME_ZIP="moxtags-chrome-${TAG}.zip"
+
+echo "Packaging $CHROME_ZIP..."
+(cd dist/chrome && COPYFILE_DISABLE=1 zip -r -X "../../$CHROME_ZIP" . -x '__MACOSX/*' '*/.*' '.*')
+echo "  $(du -h "$CHROME_ZIP" | cut -f1) $CHROME_ZIP"
+
+# --- Sign Firefox extension via AMO ---
+
+FIREFOX_XPI="moxtags-firefox-${TAG}.xpi"
+
+echo "Signing Firefox extension via AMO (unlisted)..."
+npx web-ext sign \
+  --source-dir=dist/firefox/ \
+  --artifacts-dir=web-ext-artifacts/ \
+  --channel=unlisted \
+  --api-key="$AMO_JWT_ISSUER" \
+  --api-secret="$AMO_JWT_SECRET"
+
+# Find the signed .xpi and rename to our convention.
+SIGNED_XPI=$(find web-ext-artifacts/ -name '*.xpi' -print -quit)
+if [[ -z "$SIGNED_XPI" ]]; then
+  echo "Error: web-ext sign did not produce an .xpi file"
+  rm -rf web-ext-artifacts/
+  exit 1
+fi
+mv "$SIGNED_XPI" "$FIREFOX_XPI"
+rm -rf web-ext-artifacts/
+echo "  $(du -h "$FIREFOX_XPI" | cut -f1) $FIREFOX_XPI"
+
+# --- Upload Chrome extension to Web Store ---
+
+if ! $SKIP_CHROME; then
+  echo "Uploading Chrome extension to Web Store..."
+  npx chrome-webstore-upload upload \
+    --source "$CHROME_ZIP" \
+    --extension-id "$CHROME_EXTENSION_ID" \
+    --client-id "$CHROME_CLIENT_ID" \
+    --client-secret "$CHROME_CLIENT_SECRET" \
+    --refresh-token "$CHROME_REFRESH_TOKEN"
+
+  echo "Publishing Chrome extension..."
+  npx chrome-webstore-upload publish \
+    --extension-id "$CHROME_EXTENSION_ID" \
+    --client-id "$CHROME_CLIENT_ID" \
+    --client-secret "$CHROME_CLIENT_SECRET" \
+    --refresh-token "$CHROME_REFRESH_TOKEN"
+else
+  echo "Skipping Chrome Web Store upload (--skip-chrome)"
+fi
+
 # --- Commit version bump & tag ---
 
 git add manifests/base.json package.json
@@ -132,31 +227,21 @@ git tag -a "$TAG" -m "Release $TAG"
 
 echo "Created tag $TAG"
 
-# --- Package zips ---
-
-CHROME_ZIP="moxtags-chrome-${TAG}.zip"
-FIREFOX_ZIP="moxtags-firefox-${TAG}.zip"
-
-echo "Packaging $CHROME_ZIP..."
-(cd dist/chrome && zip -r "../../$CHROME_ZIP" .)
-echo "  $(du -h "$CHROME_ZIP" | cut -f1) $CHROME_ZIP"
-
-echo "Packaging $FIREFOX_ZIP..."
-(cd dist/firefox && zip -r "../../$FIREFOX_ZIP" .)
-echo "  $(du -h "$FIREFOX_ZIP" | cut -f1) $FIREFOX_ZIP"
-
 # --- Push tag and create draft release ---
 
 echo "Pushing tag to origin..."
 git push origin main "$TAG"
 
 echo "Creating draft release on GitHub..."
-gh release create "$TAG" "$CHROME_ZIP" "$FIREFOX_ZIP" \
+gh release create "$TAG" "$CHROME_ZIP" "$FIREFOX_XPI" \
   --repo natefinch/moxtags \
   --title "MoxTags $TAG" \
   --notes "## Installation
 
 ### Chrome
+Install from the [Chrome Web Store](https://chromewebstore.google.com/detail/moxtags/${CHROME_EXTENSION_ID}).
+
+Or for manual install:
 1. Download **${CHROME_ZIP}** below
 2. Unzip it to a folder
 3. Open Chrome → \`chrome://extensions\`
@@ -164,14 +249,15 @@ gh release create "$TAG" "$CHROME_ZIP" "$FIREFOX_ZIP" \
 5. Click **Load unpacked** and select the unzipped folder
 
 ### Firefox
-1. Download **${FIREFOX_ZIP}** below
-2. Open Firefox → \`about:debugging#/runtime/this-firefox\`
-3. Click **Load Temporary Add-on** and select the zip file (or any file inside it)" \
+1. Download **${FIREFOX_XPI}** below
+2. Open Firefox → \`about:addons\`
+3. Click the gear icon (⚙) → **Install Add-on From File…**
+4. Select the downloaded \`.xpi\` file" \
   --draft
 
 # --- Cleanup ---
 
-rm "$CHROME_ZIP" "$FIREFOX_ZIP"
+rm "$CHROME_ZIP" "$FIREFOX_XPI"
 
 echo ""
 echo "Done! Draft release $TAG created at:"

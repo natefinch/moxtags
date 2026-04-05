@@ -21,23 +21,28 @@ The problem? Moxfield doesn't surface these tags anywhere. You'd have to leave y
 
 ## Install
 
-Go to [releases](./releases) to install the latest release.
-
 ### Chrome
 
-1. Download the `moxtags-chrome-vX.Y.Z.zip` file from the latest release
+Install from the [Chrome Web Store](https://chromewebstore.google.com/detail/moxtags/baekakabcmcpmhoonggddlmikdcnmkni).
+
+<details><summary>Manual install (developer mode)</summary>
+
+1. Download the `moxtags-chrome-vX.Y.Z.zip` file from the [latest release](./releases)
 2. Unzip it to a folder
 3. Open Chrome → `chrome://extensions`
 4. Enable **Developer mode**
 5. Click **Load unpacked** and select the unzipped folder
 
+</details>
+
 ### Firefox
 
 Requires Firefox 128 or later.
 
-1. Download the `moxtags-firefox-vX.Y.Z.zip` file from the latest release
-2. Open Firefox → `about:debugging#/runtime/this-firefox`
-3. Click **Load Temporary Add-on** and select the zip file (or any file inside it)
+1. Download the `moxtags-firefox-vX.Y.Z.xpi` file from the [latest release](./releases)
+2. Open Firefox → `about:addons`
+3. Click the gear icon (⚙) → **Install Add-on From File…**
+4. Select the downloaded `.xpi` file
 
 Note that the first time you install MoxTags, it has to download a complete cache of tag data from scryfall. Depending on your internet speeds this may take anywhere from a few seconds to possibly up to a few minutes. MoxTags won't work until this is finished. You can check on the status by clicking on the MoxTags toolbar button in your list of extensions.
 
