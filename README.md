@@ -50,7 +50,7 @@ Note that the first time you install MoxTags, it has to download a complete cach
 
 ## Features
 
-### Right Click Menu
+### Search By Scryfall Tags From Right Click Menu
 
 <p align="center"><img width="600" height="828" alt="Image" src="https://github.com/user-attachments/assets/267dd949-2cee-46c2-97c3-132904beb610" /></p>
 
@@ -65,7 +65,16 @@ For example, right-click your Commander and see that it's tagged with "sacrifice
 <p  align="center"><img width="531" height="569" alt="image" src="https://github.com/user-attachments/assets/9c048386-4015-4c1c-9389-c8e8bbcb04b6" />
 </p>
 
-Ever wanted to search by tags and couldn't remember exactly how the tag was worded? Now whenever you start typing `otag:` for functional tags or `art:` for art tags in the search bar, and type a few characters, moxtags will show you all tags that match what you've typed.
+### Add Scryfall Tags as Moxfield Tags
+
+<p  align="center"><img width="500" height="781" alt="image" src="https://github.com/user-attachments/assets/fa355790-aca3-45e9-95b9-fb6eb451d246" /></p>
+
+### Scryfall Tags on Search Results
+
+<p  align="center"><img width="434" height="718" alt="image" src="https://github.com/user-attachments/assets/fc6f1477-146f-40bb-88d8-f43db037ba0f" /></p>
+<br/>
+<p  align="center"><img width="640" height="526" alt="image" src="https://github.com/user-attachments/assets/c53037c7-65b5-40e3-864c-17acbbe6dc98" /></p>
+
 
 ## License
 
