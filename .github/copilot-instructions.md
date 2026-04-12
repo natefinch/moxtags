@@ -17,6 +17,7 @@ Shared pure functions live in `src/shared/` (e.g., `card.js`, `deck.js`, `autoco
 ## Build & Test
 
 ```bash
+node scripts/fetch-tags.js # download Scryfall tag data → src/data/ (run before releases)
 node build.js              # esbuild IIFE bundles → dist/chrome/ and dist/firefox/
 node build.js --watch      # watch mode
 node --test tests/*.test.js # run all tests

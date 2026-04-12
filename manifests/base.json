@@ -8,7 +8,8 @@
   "permissions": [
     "storage",
     "unlimitedStorage",
-    "alarms"
+    "alarms",
+    "declarativeNetRequestWithHostAccess"
   ],
   "host_permissions": [
     "https://api2.moxfield.com/*",

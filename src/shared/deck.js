@@ -10,8 +10,10 @@ import { BOARD_NAMES } from './constants.js';
  *
  * @param {Object} data - The raw deck JSON from Moxfield API.
  * @param {Function} [logFn] - Optional logging function for debug output.
- * @returns {Map<string, {name: string, set: string, cn: string}>|null}
- *   A map from lowercase card name → card info, or null if no cards found.
+ * @returns {{ cardMap: Map, moxIds: Map }|null}
+ *   cardMap: lowercase card name → { name, set, cn }
+ *   moxIds: Moxfield card ID → { set, cn }
+ *   Returns null if no cards found.
  */
 export function buildCardMap(data, logFn) {
   const log = logFn || (() => {});
@@ -22,6 +24,7 @@ export function buildCardMap(data, logFn) {
   }
 
   const cardMap = new Map();
+  const moxIds = new Map();
 
   log('buildCardMap: data top-level keys:', Object.keys(data).slice(0, 20).join(', '));
 
@@ -45,12 +48,12 @@ export function buildCardMap(data, logFn) {
       board = board.cards;
     }
 
-    const entries = Object.values(board);
-    if (entries.length === 0) continue;
-    log('buildCardMap: board', boardName, 'has', entries.length, 'entries');
+    const keys = Object.keys(board);
+    if (keys.length === 0) continue;
+    log('buildCardMap: board', boardName, 'has', keys.length, 'entries');
 
     // Log the first entry's structure for debugging.
-    const first = entries[0];
+    const first = board[keys[0]];
     if (first) {
       const firstKeys = Object.keys(first);
       log('buildCardMap: first entry in', boardName, '– keys:',
@@ -64,7 +67,8 @@ export function buildCardMap(data, logFn) {
       }
     }
 
-    for (const entry of entries) {
+    for (const moxId of keys) {
+      const entry = board[moxId];
       // v2 format: { card: { name, set, cn, … }, quantity, … }
       // v3 format: the entry itself is the card object { name, set, cn, … }
       //   or sometimes: { quantity, boardType, card: { name, set, cn, … } }
@@ -81,6 +85,9 @@ export function buildCardMap(data, logFn) {
       const info = { name: card.name, set, cn };
       cardMap.set(card.name.toLowerCase(), info);
 
+      // Map the Moxfield card ID to set/cn for the persistent cache.
+      moxIds.set(moxId, { set, cn });
+
       // For double-faced cards ("Front // Back"), also key by front face.
       if (card.name.includes(' // ')) {
         const front = card.name.split(' // ')[0].trim().toLowerCase();
@@ -89,6 +96,6 @@ export function buildCardMap(data, logFn) {
     }
   }
 
-  log('Card lookup ready –', cardMap.size, 'entries');
-  return cardMap.size > 0 ? cardMap : null;
+  log('Card lookup ready –', cardMap.size, 'entries,', moxIds.size, 'moxfield IDs');
+  return cardMap.size > 0 ? { cardMap, moxIds } : null;
 }

@@ -44,7 +44,7 @@ Requires Firefox 128 or later.
 3. Click the gear icon (⚙) → **Install Add-on From File…**
 4. Select the downloaded `.xpi` file
 
-Note that the first time you install MoxTags, it has to download a complete cache of tag data from scryfall. Depending on your internet speeds this may take anywhere from a few seconds to possibly up to a few minutes. MoxTags won't work until this is finished. You can check on the status by clicking on the MoxTags toolbar button in your list of extensions.
+Note that the first time you install MoxTags, it ships with a bundled snapshot of the tag data so tags are available immediately. It will automatically refresh this data from Scryfall in the background. You can check on the status by clicking on the MoxTags toolbar button in your list of extensions.
 
 <img width="313" height="227" alt="image" src="https://github.com/user-attachments/assets/d921c482-58e9-4af8-bd57-c912543548c9" />
 
@@ -102,6 +102,7 @@ npm test
 ### Release
 
 ```bash
+node scripts/fetch-tags.js # Update bundled Scryfall tag data before releasing
 ./release.sh           # Bump minor version, build, tag, and create draft GitHub release
 ./release.sh --patch   # Bump patch version only
 ./release.sh --dryrun  # Preview what would happen

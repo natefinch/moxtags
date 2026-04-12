@@ -2,7 +2,7 @@
 // MoxTags build script — bundles src/ into dist/chrome/ and dist/firefox/.
 
 import * as esbuild from 'esbuild';
-import { readFileSync, writeFileSync, mkdirSync, cpSync, rmSync } from 'fs';
+import { readFileSync, writeFileSync, mkdirSync, cpSync, rmSync, existsSync } from 'fs';
 import { join } from 'path';
 
 const BROWSERS = ['chrome', 'firefox'];
@@ -41,15 +41,28 @@ async function buildBrowser(browser) {
   }
 
   // Copy non-bundled files.
+  const manifest = mergeManifests(browser);
   for (const file of COPY_FILES) {
-    cpSync(join(ROOT, 'src', file), join(dist, file));
+    if (file === 'page_hook.js') {
+      // Inject the version number into the placeholder.
+      let src = readFileSync(join(ROOT, 'src', file), 'utf-8');
+      src = src.replace('__MOXTAGS_VERSION__', manifest.version);
+      writeFileSync(join(dist, file), src);
+    } else {
+      cpSync(join(ROOT, 'src', file), join(dist, file));
+    }
   }
 
   // Copy icons.
   cpSync(join(ROOT, 'icons'), join(dist, 'icons'), { recursive: true });
 
-  // Merge and write manifest.
-  const manifest = mergeManifests(browser);
+  // Copy bundled tag data (if present).
+  const dataDir = join(ROOT, 'src', 'data');
+  if (existsSync(dataDir)) {
+    cpSync(dataDir, join(dist, 'data'), { recursive: true });
+  }
+
+  // Merge and write manifest (already done above for version injection).
   writeFileSync(join(dist, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
 
   console.log(`✔ Built ${browser} → dist/${browser}/`);

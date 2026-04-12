@@ -1,6 +1,11 @@
 {
   "background": {
-    "scripts": ["background.js"]
+    "scripts": [
+      "data/oracle-tags.js",
+      "data/illustration-tags-1.js",
+      "data/illustration-tags-2.js",
+      "background.js"
+    ]
   },
   "browser_specific_settings": {
     "gecko": {

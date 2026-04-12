@@ -1,5 +1,7 @@
 // MoxTags – Popup Script
 
+console.log('[MoxTags Popup] Popup opened');
+
 const statusDot  = document.getElementById('statusDot');
 const statusText  = document.getElementById('statusText');
 const details     = document.getElementById('details');
@@ -9,9 +11,11 @@ const refreshBtn  = document.getElementById('refreshBtn');
 loadStatus();
 
 refreshBtn.addEventListener('click', () => {
+  console.log('[MoxTags Popup] Refresh button clicked');
   refreshBtn.disabled = true;
   refreshBtn.textContent = 'Refreshing…';
   chrome.runtime.sendMessage({ type: 'refreshTags' }, () => {
+    console.log('[MoxTags Popup] refreshTags message sent, polling…');
     // Brief delay so the background has time to start the fetch,
     // then poll until it finishes.
     setTimeout(pollUntilReady, 500);
@@ -20,6 +24,7 @@ refreshBtn.addEventListener('click', () => {
 
 function pollUntilReady() {
   chrome.runtime.sendMessage({ type: 'getStatus' }, (resp) => {
+    console.log('[MoxTags Popup] getStatus response:', JSON.stringify(resp));
     renderStatus(resp);
     if (resp?.refreshing) {
       setTimeout(pollUntilReady, 800);
@@ -31,12 +36,15 @@ function pollUntilReady() {
 }
 
 function loadStatus() {
+  console.log('[MoxTags Popup] Loading initial status…');
   chrome.runtime.sendMessage({ type: 'getStatus' }, (resp) => {
     if (chrome.runtime.lastError || !resp) {
+      console.warn('[MoxTags Popup] Cannot reach background:', chrome.runtime.lastError?.message);
       statusDot.className = 'status-dot error';
       statusText.textContent = 'Cannot reach background worker';
       return;
     }
+    console.log('[MoxTags Popup] Initial status:', JSON.stringify(resp));
     renderStatus(resp);
   });
 }

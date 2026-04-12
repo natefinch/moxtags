@@ -14,11 +14,16 @@ describe('buildCardMap', () => {
         'entry2': { card: { name: 'Dark Ritual', set: 'lea', cn: '98' }, quantity: 4 },
       },
     };
-    const map = buildCardMap(data);
-    assert.ok(map);
+    const result = buildCardMap(data);
+    assert.ok(result);
+    const { cardMap: map, moxIds } = result;
     assert.equal(map.size, 2);
     assert.deepEqual(map.get('lightning bolt'), { name: 'Lightning Bolt', set: 'lea', cn: '161' });
     assert.deepEqual(map.get('dark ritual'), { name: 'Dark Ritual', set: 'lea', cn: '98' });
+    // moxIds should map entry keys to set/cn
+    assert.equal(moxIds.size, 2);
+    assert.deepEqual(moxIds.get('entry1'), { set: 'lea', cn: '161' });
+    assert.deepEqual(moxIds.get('entry2'), { set: 'lea', cn: '98' });
   });
 
   it('parses v3 format (boards under data.boards)', () => {
@@ -31,9 +36,11 @@ describe('buildCardMap', () => {
         },
       },
     };
-    const map = buildCardMap(data);
-    assert.ok(map);
+    const result = buildCardMap(data);
+    assert.ok(result);
+    const { cardMap: map, moxIds } = result;
     assert.deepEqual(map.get('sol ring'), { name: 'Sol Ring', set: 'c21', cn: '263' });
+    assert.deepEqual(moxIds.get('entry1'), { set: 'c21', cn: '263' });
   });
 
   it('handles double-faced cards', () => {
@@ -42,7 +49,7 @@ describe('buildCardMap', () => {
         'entry1': { card: { name: 'Delver of Secrets // Insectile Aberration', set: 'isd', cn: '51' } },
       },
     };
-    const map = buildCardMap(data);
+    const { cardMap: map } = buildCardMap(data);
     assert.ok(map);
     // Full name key
     assert.ok(map.has('delver of secrets // insectile aberration'));
@@ -67,10 +74,14 @@ describe('buildCardMap', () => {
         'entry3': { card: { name: 'Good Card', set: 'lea', cn: '1' } },
       },
     };
-    const map = buildCardMap(data);
-    assert.ok(map);
+    const result = buildCardMap(data);
+    assert.ok(result);
+    const { cardMap: map, moxIds } = result;
     assert.equal(map.size, 1);
     assert.ok(map.has('good card'));
+    // Only the valid card should be in moxIds
+    assert.equal(moxIds.size, 1);
+    assert.deepEqual(moxIds.get('entry3'), { set: 'lea', cn: '1' });
   });
 
   it('handles multiple boards', () => {
@@ -85,9 +96,10 @@ describe('buildCardMap', () => {
         'e3': { card: { name: 'Atraxa', set: 'cm2', cn: '10' } },
       },
     };
-    const map = buildCardMap(data);
-    assert.ok(map);
-    assert.equal(map.size, 3);
+    const result = buildCardMap(data);
+    assert.ok(result);
+    assert.equal(result.cardMap.size, 3);
+    assert.equal(result.moxIds.size, 3);
   });
 
   it('uses collector_number as fallback for cn', () => {
@@ -96,8 +108,8 @@ describe('buildCardMap', () => {
         'e1': { card: { name: 'Test Card', set: 'tst', collector_number: '42' } },
       },
     };
-    const map = buildCardMap(data);
-    assert.ok(map);
-    assert.deepEqual(map.get('test card'), { name: 'Test Card', set: 'tst', cn: '42' });
+    const result = buildCardMap(data);
+    assert.ok(result);
+    assert.deepEqual(result.cardMap.get('test card'), { name: 'Test Card', set: 'tst', cn: '42' });
   });
 });

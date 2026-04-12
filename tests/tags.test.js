@@ -4,7 +4,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildReverseIndex, extractTagNames } from '../src/shared/tags.js';
+import {
+  buildReverseIndex, extractTagNames,
+  buildCompactIndex, expandCompactIndex, splitCompactIndex,
+} from '../src/shared/tags.js';
 
 describe('buildReverseIndex', () => {
   it('maps IDs to tag entries', () => {
@@ -59,5 +62,124 @@ describe('extractTagNames', () => {
 
   it('returns empty array for empty input', () => {
     assert.deepEqual(extractTagNames([]), []);
+  });
+});
+
+describe('buildCompactIndex', () => {
+  it('produces compact indexed format', () => {
+    const tags = [
+      { label: 'draw', oracle_ids: ['uuid1', 'uuid2'] },
+      { label: 'ramp', oracle_ids: ['uuid2'] },
+    ];
+    const index = buildReverseIndex(tags, 'oracle_ids');
+    const compact = buildCompactIndex(index);
+
+    assert.deepEqual(compact.t, ['draw', 'ramp']);
+    assert.deepEqual(compact.d['uuid1'], [0]);       // draw
+    assert.deepEqual(compact.d['uuid2'], [0, 1]);     // draw, ramp
+  });
+
+  it('handles empty index', () => {
+    const compact = buildCompactIndex(new Map());
+    assert.deepEqual(compact.t, []);
+    assert.deepEqual(compact.d, {});
+  });
+});
+
+describe('expandCompactIndex', () => {
+  it('reconstructs Map from compact format', () => {
+    const compact = {
+      t: ['draw', 'ramp'],
+      d: { uuid1: [0], uuid2: [0, 1] },
+    };
+    const index = expandCompactIndex(compact);
+
+    assert.equal(index.size, 2);
+    assert.deepEqual(index.get('uuid1'), [{ name: 'draw', slug: 'draw' }]);
+    assert.deepEqual(index.get('uuid2'), [
+      { name: 'draw', slug: 'draw' },
+      { name: 'ramp', slug: 'ramp' },
+    ]);
+  });
+
+  it('handles empty compact format', () => {
+    const index = expandCompactIndex({ t: [], d: {} });
+    assert.equal(index.size, 0);
+  });
+});
+
+describe('compact index round-trip', () => {
+  it('buildCompactIndex + expandCompactIndex reproduces original index', () => {
+    const tags = [
+      { label: 'ramp', oracle_ids: ['uuid1', 'uuid2'] },
+      { label: 'draw', oracle_ids: ['uuid2', 'uuid3'] },
+      { label: 'artifact', oracle_ids: ['uuid1'] },
+    ];
+    const original = buildReverseIndex(tags, 'oracle_ids');
+    const compact = buildCompactIndex(original);
+    const restored = expandCompactIndex(compact);
+
+    assert.equal(restored.size, original.size);
+    for (const [id, entries] of original) {
+      const restoredEntries = restored.get(id);
+      assert.ok(restoredEntries, `missing key: ${id}`);
+      // Sort both by name for stable comparison (compact sorts labels).
+      const sortedOrig = [...entries].sort((a, b) => a.name.localeCompare(b.name));
+      const sortedRest = [...restoredEntries].sort((a, b) => a.name.localeCompare(b.name));
+      assert.deepEqual(sortedRest, sortedOrig);
+    }
+  });
+
+  it('compact t array matches extractTagNames output', () => {
+    const rawTags = [
+      { label: 'ramp', oracle_ids: ['uuid1'] },
+      { label: 'draw', oracle_ids: ['uuid2'] },
+      { label: 'artifact', oracle_ids: ['uuid1'] },
+    ];
+    const index = buildReverseIndex(rawTags, 'oracle_ids');
+    const compact = buildCompactIndex(index);
+    const tagNames = extractTagNames(rawTags);
+
+    assert.deepEqual(compact.t, tagNames);
+  });
+});
+
+describe('splitCompactIndex', () => {
+  it('splits d entries across n parts with shared t array', () => {
+    const compact = {
+      t: ['draw', 'ramp'],
+      d: { uuid1: [0], uuid2: [1], uuid3: [0, 1], uuid4: [1] },
+    };
+    const parts = splitCompactIndex(compact, 2);
+
+    assert.equal(parts.length, 2);
+    // Both parts share the same t array.
+    assert.deepEqual(parts[0].t, compact.t);
+    assert.deepEqual(parts[1].t, compact.t);
+    // All keys distributed across parts.
+    const allKeys = [
+      ...Object.keys(parts[0].d),
+      ...Object.keys(parts[1].d),
+    ];
+    assert.deepEqual(allKeys.sort(), Object.keys(compact.d).sort());
+  });
+
+  it('expanding split parts reproduces original index', () => {
+    const tags = [
+      { label: 'ramp', oracle_ids: ['uuid1', 'uuid2', 'uuid3'] },
+      { label: 'draw', oracle_ids: ['uuid2', 'uuid3', 'uuid4'] },
+      { label: 'artifact', oracle_ids: ['uuid1', 'uuid4'] },
+    ];
+    const original = buildReverseIndex(tags, 'oracle_ids');
+    const compact = buildCompactIndex(original);
+    const [p1, p2] = splitCompactIndex(compact, 2);
+    const restored = expandCompactIndex(p1, p2);
+
+    assert.equal(restored.size, original.size);
+    for (const [id, entries] of original) {
+      const sortedOrig = [...entries].sort((a, b) => a.name.localeCompare(b.name));
+      const sortedRest = [...restored.get(id)].sort((a, b) => a.name.localeCompare(b.name));
+      assert.deepEqual(sortedRest, sortedOrig);
+    }
   });
 });

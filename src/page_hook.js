@@ -7,6 +7,7 @@
   'use strict';
 
   const TAG = '[MoxTags Hook]';
+  const USER_AGENT = 'MoxTags/__MOXTAGS_VERSION__';
 
   // Regex matching Moxfield deck API URLs (v2 or v3).
   const DECK_API_RE = /\/v[23]\/decks\/all\/[A-Za-z0-9_-]+/;
@@ -177,7 +178,7 @@
     const url = `https://api2.moxfield.com/v3/cards/rulings/${encodeURIComponent(cardId)}`;
     console.log(TAG, 'Card lookup request for', cardId);
 
-    origFetchForLookup(url, { credentials: 'include' })
+    origFetchForLookup(url, { credentials: 'include', headers: { 'User-Agent': USER_AGENT } })
       .then(resp => {
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         return resp.json();

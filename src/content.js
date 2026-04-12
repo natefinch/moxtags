@@ -22,6 +22,23 @@ import { findUnprocessedMoreOptionsButtons, extractCardInfoFromRow } from './sha
   let observer = null;
   let lastUrl = location.href;
 
+  // Persistent cache: Moxfield card ID → { set, cn }.
+  // Avoids repeated Moxfield API lookups for the same card across sessions.
+  const moxIdCache = new Map();
+  let moxIdCacheDirty = false;
+  const MOX_ID_CACHE_KEY = 'moxIdCache';
+
+  // Load the cache from storage on startup.
+  chrome.storage.local.get(MOX_ID_CACHE_KEY, (result) => {
+    const stored = result[MOX_ID_CACHE_KEY];
+    if (stored && typeof stored === 'object') {
+      for (const [id, val] of Object.entries(stored)) {
+        moxIdCache.set(id, val);
+      }
+      log('Moxfield ID cache loaded:', moxIdCache.size, 'entries');
+    }
+  });
+
   // ─── Autocomplete state ────────────────────────────────────────────
   let acInput = null;           // the #deckbox-search element
   let acDropdown = null;        // the dropdown container
@@ -37,13 +54,17 @@ import { findUnprocessedMoreOptionsButtons, extractCardInfoFromRow } from './sha
   let acBlurTimer = null;       // delay for blur dismissal
 
   // ─── Bootstrap ──────────────────────────────────────────────────────
+  log('Content script loaded at', location.href);
   init();
 
   function init() {
     deckId = extractDeckId();
-    if (!deckId) return;
+    if (!deckId) {
+      log('Not a deck page, skipping init');
+      return;
+    }
     deckUrl = location.origin + '/decks/' + deckId;
-    log('Initializing for deck', deckId);
+    log('Initializing for deck', deckId, 'at', deckUrl);
 
     fetchDeckData();
 
@@ -188,7 +209,8 @@ import { findUnprocessedMoreOptionsButtons, extractCardInfoFromRow } from './sha
         log('fetchDeckData: parsed response keys:', keys.slice(0, 15).join(', '));
         const result = buildCardMap(data, log);
         if (result) {
-          cardMap = result;
+          cardMap = result.cardMap;
+          mergeMoxIds(result.moxIds);
           log('fetchDeckData: Strategy 1 SUCCESS');
           prefetchAllTags();
           return;
@@ -211,7 +233,8 @@ import { findUnprocessedMoreOptionsButtons, extractCardInfoFromRow } from './sha
     }
     const result = data && buildCardMap(data, log);
     if (result) {
-      cardMap = result;
+      cardMap = result.cardMap;
+      mergeMoxIds(result.moxIds);
       log('fetchDeckData: Strategy 2 SUCCESS');
       prefetchAllTags();
       return;
@@ -231,7 +254,10 @@ import { findUnprocessedMoreOptionsButtons, extractCardInfoFromRow } from './sha
       seen.add(key);
       cards.push({ set: info.set, cn: info.cn });
     }
-    log('Prefetching tags for', cards.length, 'unique cards…');
+    log('Prefetching tags for', cards.length, 'unique cards from', cardMap.size, 'total card map entries');
+    if (cards.length > 0) {
+      log('Sample cards to prefetch:', cards.slice(0, 5).map(c => `${c.set}/${c.cn}`).join(', '));
+    }
     chrome.runtime.sendMessage({ type: 'prefetchDeck', cards }, (resp) => {
       if (chrome.runtime.lastError) {
         warn('Prefetch failed:', chrome.runtime.lastError.message);
@@ -256,6 +282,8 @@ import { findUnprocessedMoreOptionsButtons, extractCardInfoFromRow } from './sha
       if (info) {
         currentCard = info;
         log('Card context set →', info.name, `(${info.set}/${info.cn})`);
+      } else {
+        log('Card name found but not in cardMap:', name);
       }
     }
   }
@@ -312,7 +340,7 @@ import { findUnprocessedMoreOptionsButtons, extractCardInfoFromRow } from './sha
     const candidates = [el, ...el.querySelectorAll('*')];
     for (const c of candidates) {
       if (isCardMenu(c)) {
-        log('Menu detected via MutationObserver');
+        log('Menu detected via MutationObserver, card:', currentCard?.name);
         injectTagsIntoMenu(c);
         return;
       }
@@ -363,17 +391,32 @@ import { findUnprocessedMoreOptionsButtons, extractCardInfoFromRow } from './sha
     // results page) instead of the one whose Options button was clicked.
     currentCard = null;
     const card = toggle.closest('.decklist-card');
-    if (!card) return;
+    if (!card) {
+      log('Options toggle clicked but no .decklist-card parent found');
+      return;
+    }
     const nameEl = card.querySelector('.decklist-card-phantomsearch');
     const name = nameEl?.textContent?.trim();
-    if (!name) return;
+    if (!name) {
+      log('Options toggle clicked but no card name found in .decklist-card-phantomsearch');
+      return;
+    }
     const info = cardMap.get(name.toLowerCase());
     if (info) {
       lastOptionsCard = info;
+      log('Options click tracked:', name, `(${info.set}/${info.cn})`);
     } else {
-      lastOptionsCard = { name, set: null, cn: null };
+      // Card not in deck — try to capture the Moxfield card ID so we can
+      // resolve the exact printing later. Check (in order):
+      //   1. a[href="/cards/{id}-slug"] link within the card element
+      //   2. data-hash attribute on the .decklist-card element
+      const cardLink = card.querySelector('a[href*="/cards/"]');
+      const moxCardId = cardLink
+        ? parseCardIdFromHref(cardLink.getAttribute('href'))
+        : (card.dataset?.hash || null);
+      lastOptionsCard = { name, set: null, cn: null, moxCardId: moxCardId || null };
+      log('Options click tracked:', name, '(not in deck cardMap)', moxCardId ? `moxCardId=${moxCardId}` : 'no moxCardId');
     }
-    log('Options click tracked:', name, info ? `(${info.set}/${info.cn})` : '(not in deck)');
   }, true);
 
   function scanForCardDropdown(el) {
@@ -486,14 +529,22 @@ import { findUnprocessedMoreOptionsButtons, extractCardInfoFromRow } from './sha
   // standalone "Art Tags" / "Card Tags" buttons after "More Options".
 
   function scanForLongLayout(el) {
-    for (const { button, row } of findUnprocessedMoreOptionsButtons(el)) {
+    const results = findUnprocessedMoreOptionsButtons(el);
+    if (results.length > 0) {
+      log('scanForLongLayout: found', results.length, 'unprocessed More Options buttons');
+    }
+    for (const { button, row } of results) {
       injectLongLayoutButtons(button, row);
     }
   }
 
   function injectLongLayoutButtons(moreOptionsBtn, cardRow) {
     const { moxCardId, cardName } = extractCardInfoFromRow(cardRow);
-    if (!moxCardId && !cardName) return;
+    log('injectLongLayoutButtons: cardId =', moxCardId, 'name =', cardName);
+    if (!moxCardId && !cardName) {
+      log('injectLongLayoutButtons: no card identity found, skipping');
+      return;
+    }
 
     const wrapper = document.createElement('div');
     wrapper.className = 'moxtags-long-btn-wrapper moxtags-injected mt-2';
@@ -528,6 +579,7 @@ import { findUnprocessedMoreOptionsButtons, extractCardInfoFromRow } from './sha
 
     btn.addEventListener('click', async (e) => {
       e.stopPropagation();
+      log('Long layout button clicked:', title, 'cardId:', moxCardId, 'name:', cardName);
 
       // Close other open long-layout menus.
       document.querySelectorAll('.moxtags-long-menu.show').forEach(m => {
@@ -557,11 +609,16 @@ import { findUnprocessedMoreOptionsButtons, extractCardInfoFromRow } from './sha
       if (cardInfo) {
         set = cardInfo.set;
         cn = cardInfo.cn;
+        log('Long layout: resolved from cardMap:', cardName, '→', set, cn);
       } else if (moxCardId) {
+        log('Long layout: card not in cardMap, resolving via Moxfield ID:', moxCardId);
         const resolved = await lookupCardByMoxfieldId(moxCardId);
         if (resolved) {
           set = resolved.set;
           cn = resolved.cn;
+          log('Long layout: Moxfield ID resolved:', moxCardId, '→', set, cn);
+        } else {
+          log('Long layout: Moxfield ID resolution failed for:', moxCardId);
         }
       }
 
@@ -571,17 +628,25 @@ import { findUnprocessedMoreOptionsButtons, extractCardInfoFromRow } from './sha
         if (set && cn) {
           const cacheKey = `${set}/${cn}`;
           tags = tagCache.get(cacheKey);
-          if (!tags) {
+          if (tags) {
+            log('Long layout: tags from cache for', cacheKey);
+          } else {
+            log('Long layout: loading tags from background for', cacheKey);
             tags = await loadTags(set, cn);
             tagCache.set(cacheKey, tags);
           }
         } else if (cardName) {
           const cacheKey = `name:${cardName.toLowerCase()}`;
           tags = tagCache.get(cacheKey);
-          if (!tags) {
+          if (tags) {
+            log('Long layout: tags from cache for', cacheKey);
+          } else {
+            log('Long layout: loading tags by name for', cardName);
             tags = await loadTagsByName(cardName);
             tagCache.set(cacheKey, tags);
           }
+        } else {
+          log('Long layout: no set/cn or cardName, cannot fetch tags');
         }
       } catch (err) {
         error('Long layout tag fetch failed:', err);
@@ -695,7 +760,10 @@ import { findUnprocessedMoreOptionsButtons, extractCardInfoFromRow } from './sha
   // ─── Tag injection ─────────────────────────────────────────────────
   async function injectTagsIntoMenu(menu) {
     // Debounce: multiple detection paths may fire simultaneously.
-    if (injecting) return;
+    if (injecting) {
+      log('injectTagsIntoMenu: skipping, already injecting');
+      return;
+    }
     injecting = true;
 
     // Remove any previous injection in this menu.
@@ -708,18 +776,27 @@ import { findUnprocessedMoreOptionsButtons, extractCardInfoFromRow } from './sha
     }
 
     let { name, set, cn } = currentCard;
+    log('injectTagsIntoMenu: card =', name, 'set =', set, 'cn =', cn);
 
-    // If we don't have set/cn, try to resolve via the Moxfield card ID
-    // from the "View Details" link in this dropdown menu.
+    // If we don't have set/cn, try to resolve via the Moxfield card ID.
+    // First check the dropdown menu for a "View Details" link, then fall
+    // back to the moxCardId captured when the Options button was clicked.
     if (!set || !cn) {
-      const moxCardId = extractCardIdFromMenu(menu);
+      let moxCardId = extractCardIdFromMenu(menu);
+      if (!moxCardId && currentCard.moxCardId) {
+        moxCardId = currentCard.moxCardId;
+        log('injectTagsIntoMenu: using moxCardId from Options click:', moxCardId);
+      }
       if (moxCardId) {
-        log('Resolving card ID from menu:', moxCardId);
+        log('injectTagsIntoMenu: resolving card via Moxfield ID:', moxCardId);
         const resolved = await lookupCardByMoxfieldId(moxCardId);
         if (resolved) {
           set = resolved.set;
           cn = resolved.cn;
           currentCard = { name, set, cn };
+          log('injectTagsIntoMenu: resolved to', set, cn);
+        } else {
+          log('injectTagsIntoMenu: Moxfield ID resolution failed for', moxCardId);
         }
       }
     }
@@ -774,7 +851,10 @@ import { findUnprocessedMoreOptionsButtons, extractCardInfoFromRow } from './sha
       if (set && cn) {
         const cacheKey = `${set}/${cn}`;
         tags = tagCache.get(cacheKey);
-        if (!tags) {
+        if (tags) {
+          log('injectTagsIntoMenu: tags from cache for', cacheKey);
+        } else {
+          log('injectTagsIntoMenu: loading tags for', cacheKey);
           tags = await loadTags(set, cn);
           tagCache.set(cacheKey, tags);
         }
@@ -782,7 +862,10 @@ import { findUnprocessedMoreOptionsButtons, extractCardInfoFromRow } from './sha
         // Card not in deck and Moxfield ID resolution failed — fall back to name.
         const cacheKey = `name:${name.toLowerCase()}`;
         tags = tagCache.get(cacheKey);
-        if (!tags) {
+        if (tags) {
+          log('injectTagsIntoMenu: tags from cache for', cacheKey);
+        } else {
+          log('injectTagsIntoMenu: loading tags by name for', name);
           tags = await loadTagsByName(name);
           tagCache.set(cacheKey, tags);
         }
@@ -824,17 +907,20 @@ import { findUnprocessedMoreOptionsButtons, extractCardInfoFromRow } from './sha
 
   // ─── Tag fetching ────────────────────────────────────────────────────
   async function loadTags(set, cn) {
+    log('loadTags: requesting tags for', set, cn);
     return new Promise((resolve, reject) => {
       chrome.runtime.sendMessage(
         { type: 'fetchTags', set, number: cn },
         (resp) => {
           if (chrome.runtime.lastError) {
+            warn('loadTags: runtime error:', chrome.runtime.lastError.message);
             return reject(new Error(chrome.runtime.lastError.message));
           }
           if (resp?.ok) {
-            log(`Tags loaded: ${resp.artTags.length} art, ${resp.cardTags.length} card`);
+            log(`loadTags: ${set}/${cn} → ${resp.artTags.length} art, ${resp.cardTags.length} card tags`);
             resolve({ artTags: resp.artTags, cardTags: resp.cardTags, cacheLoading: resp.cacheLoading });
           } else {
+            warn('loadTags: failed for', set, cn, ':', resp?.error, 'cacheLoading:', resp?.cacheLoading);
             const err = new Error(resp?.error || 'Tag fetch failed');
             err.cacheLoading = resp?.cacheLoading;
             reject(err);
@@ -845,17 +931,20 @@ import { findUnprocessedMoreOptionsButtons, extractCardInfoFromRow } from './sha
   }
 
   async function loadTagsByName(name) {
+    log('loadTagsByName: requesting tags for', name);
     return new Promise((resolve, reject) => {
       chrome.runtime.sendMessage(
         { type: 'fetchTagsByName', name },
         (resp) => {
           if (chrome.runtime.lastError) {
+            warn('loadTagsByName: runtime error:', chrome.runtime.lastError.message);
             return reject(new Error(chrome.runtime.lastError.message));
           }
           if (resp?.ok) {
-            log(`Tags loaded by name (${name}): ${resp.artTags.length} art, ${resp.cardTags.length} card`);
+            log(`loadTagsByName: ${name} → ${resp.artTags.length} art, ${resp.cardTags.length} card tags`);
             resolve({ artTags: resp.artTags, cardTags: resp.cardTags, cacheLoading: resp.cacheLoading });
           } else {
+            warn('loadTagsByName: failed for', name, ':', resp?.error, 'cacheLoading:', resp?.cacheLoading);
             const err = new Error(resp?.error || 'Tag fetch failed');
             err.cacheLoading = resp?.cacheLoading;
             reject(err);
@@ -880,9 +969,17 @@ import { findUnprocessedMoreOptionsButtons, extractCardInfoFromRow } from './sha
 
   /**
    * Look up a card's set/cn via Moxfield API (proxied through page_hook.js).
+   * Results are cached in chrome.storage.local to avoid repeat lookups.
    * Returns { set, cn } or null on failure.
    */
   function lookupCardByMoxfieldId(cardId) {
+    // Check in-memory cache first.
+    const cached = moxIdCache.get(cardId);
+    if (cached) {
+      log('Card lookup cache hit:', cardId, '→', cached.set, cached.cn);
+      return Promise.resolve(cached);
+    }
+
     return new Promise((resolve) => {
       const requestId = `${cardId}-${Date.now()}`;
       const timeout = setTimeout(() => {
@@ -899,14 +996,53 @@ import { findUnprocessedMoreOptionsButtons, extractCardInfoFromRow } from './sha
           log('Card lookup failed:', cardId, e.data.error || 'missing set/cn');
           resolve(null);
         } else {
-          log('Card lookup resolved:', cardId, '→', e.data.set, e.data.cn);
-          resolve({ set: e.data.set, cn: e.data.cn });
+          const result = { set: e.data.set, cn: e.data.cn };
+          log('Card lookup resolved:', cardId, '→', result.set, result.cn);
+          // Persist to cache.
+          moxIdCache.set(cardId, result);
+          persistMoxIdCache();
+          resolve(result);
         }
       }
 
       window.addEventListener('message', handler);
       window.postMessage({ type: 'moxtags-card-lookup', cardId, requestId });
     });
+  }
+
+  /** Debounced write of the moxfield ID cache to chrome.storage.local. */
+  let moxIdFlushTimer = null;
+  function persistMoxIdCache() {
+    moxIdCacheDirty = true;
+    if (moxIdFlushTimer) return;
+    moxIdFlushTimer = setTimeout(() => {
+      moxIdFlushTimer = null;
+      if (!moxIdCacheDirty) return;
+      moxIdCacheDirty = false;
+      const obj = Object.fromEntries(moxIdCache);
+      chrome.storage.local.set({ [MOX_ID_CACHE_KEY]: obj }, () => {
+        log('Moxfield ID cache persisted:', moxIdCache.size, 'entries');
+      });
+    }, 2000);
+  }
+
+  /**
+   * Merge a batch of Moxfield card ID → { set, cn } entries from
+   * the deck JSON into the persistent cache.
+   */
+  function mergeMoxIds(moxIds) {
+    if (!moxIds || moxIds.size === 0) return;
+    let added = 0;
+    for (const [id, val] of moxIds) {
+      if (!moxIdCache.has(id)) {
+        moxIdCache.set(id, val);
+        added++;
+      }
+    }
+    if (added > 0) {
+      log('Moxfield ID cache: merged', added, 'new entries from deck (total:', moxIdCache.size + ')');
+      persistMoxIdCache();
+    }
   }
 
   // ─── Search helpers ─────────────────────────────────────────────────
@@ -1339,14 +1475,18 @@ import { findUnprocessedMoreOptionsButtons, extractCardInfoFromRow } from './sha
 
   // ─── Background communication ──────────────────────────────────────
   function bgFetch(url) {
+    log('bgFetch: requesting', url);
     return new Promise((resolve, reject) => {
       chrome.runtime.sendMessage({ type: 'fetch', url }, (resp) => {
         if (chrome.runtime.lastError) {
+          warn('bgFetch: runtime error:', chrome.runtime.lastError.message);
           return reject(new Error(chrome.runtime.lastError.message));
         }
         if (resp?.ok) {
+          log('bgFetch: success, body length:', resp.body?.length);
           resolve(resp.body);
         } else {
+          warn('bgFetch: failed for', url, ':', resp?.error, 'status:', resp?.status);
           reject(new Error(resp?.error || 'Fetch failed'));
         }
       });
