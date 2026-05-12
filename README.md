@@ -1,6 +1,6 @@
 # MoxTags
 
-<img width="400" height="905" alt="image" align="right" src="https://github.com/user-attachments/assets/a9f14f67-ef6a-4138-8c11-e9fd86b72ed0" />
+<img width="400"  alt="image" align="right" src="https://github.com/user-attachments/assets/a9f14f67-ef6a-4138-8c11-e9fd86b72ed0" />
 
 A browser extension (Chrome and Firefox) that adds **Scryfall Tagger** art
 tags and card tags to the card context menus on
@@ -55,18 +55,18 @@ For example, right-click your Commander and see that it's tagged with "sacrifice
 
 ### Add Scryfall Tags as Moxfield Tags
 
-<p  align="center"><img width="500" height="781" alt="image" src="https://github.com/user-attachments/assets/fa355790-aca3-45e9-95b9-fb6eb451d246" /></p>
+<p  align="center"><img width="500"  alt="image" src="https://github.com/user-attachments/assets/fa355790-aca3-45e9-95b9-fb6eb451d246" /></p>
 
 ### Scryfall Tags on Search Results
 
 - Click the 'Options' menu on image search results to find submenus for card tags. 
 
-<img width="375" height="923" alt="image" src="https://github.com/user-attachments/assets/90b917b4-957f-4e76-bd40-23760306c8d6" />
+<img width="375"  alt="image" src="https://github.com/user-attachments/assets/90b917b4-957f-4e76-bd40-23760306c8d6" />
 
 
 - On text search results, image and card tags are added as dropdown menus.
 
-<img width="600" height="669" alt="image" src="https://github.com/user-attachments/assets/45715033-d68d-4980-9f12-97d88e0bf501" />
+<img width="600"  alt="image" src="https://github.com/user-attachments/assets/45715033-d68d-4980-9f12-97d88e0bf501" />
 
 
 
