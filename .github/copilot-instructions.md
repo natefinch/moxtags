@@ -2,17 +2,18 @@
 
 ## Project Overview
 
-MoxTags is a browser extension that injects Scryfall Tagger art/card tags into Moxfield (MTG deck builder) UI elements — context menus, Options dropdowns, tag dialogs, and search autocomplete.
+MoxTags is a browser extension that injects Scryfall Tagger art/card tags into Moxfield (MTG deck builder) UI elements — context menus, Options dropdowns, tag dialogs, and search autocomplete — and into Scryfall card and full search-result pages.
 
 ## Architecture
 
-The extension uses a 3-layer architecture. Each layer runs in a different execution context:
+The extension uses content scripts plus a background service worker across different execution contexts:
 
 - **`src/content.js`** — Runs in the **ISOLATED world**. Handles all DOM inspection and injection (menus, dialogs, autocomplete). Communicates with background.js via `chrome.runtime.sendMessage` and with page_hook.js via `window.postMessage`.
+- **`src/scryfall_content.js`** — Runs in the **ISOLATED world** on Scryfall card and full search-result pages. Injects card/art tag sections under each `p.card-text-artist` and uses background.js for tag lookup.
 - **`src/page_hook.js`** — Runs in the **MAIN world** (injected at `document_start`). Intercepts `fetch`/`XHR` to capture deck JSON data. Also proxies Moxfield API calls on behalf of content.js, since it has access to the user's authenticated session cookies.
 - **`src/background.js`** — Service worker. Handles Scryfall API calls, tag index caching, and card data lookups.
 
-Shared pure functions live in `src/shared/` (e.g., `card.js`, `deck.js`, `autocomplete.js`, `constants.js`).
+Shared pure functions live in `src/shared/` (e.g., `autocomplete.js`, `scryfall-page.js`, `constants.js`).
 
 ## Build & Test
 
@@ -92,6 +93,18 @@ Two tracking mechanisms identify which card was clicked:
 **Important:** Portal menus (appended to `<body>`) must prefer `lastOptionsCard` over `currentCard`. The general handler can incorrectly match ANY visible card name on the page (not just the clicked one). `currentCard` must be cleared when menus close and when the Options button is clicked to prevent stale state.
 
 For search result cards not in the deck, the exact printing is resolved by extracting the Moxfield card ID from the "View Details" link in the dropdown, then proxying a `GET https://api2.moxfield.com/v2/cards/details/{cardId}` call through `page_hook.js`.
+
+## Scryfall Page DOM Patterns
+
+### Card and Full Search Pages
+- Card profiles use `.card-profile` and artist credits use `p.card-text-artist`.
+- MoxTags injects `section.card-text-box.moxtags-scryfall-tags.moxtags-injected` after the artist credit so Scryfall's native `.card-text-box` spacing applies.
+- The injected Card Tags and Art Tags sections are collapsed by default and use `.moxtags-scryfall-chevron` for the disclosure indicator.
+- Tag links should keep a real Scryfall search `href`, but clicks append the tag token to `#header-search-field` and dispatch `input`/`change` events.
+- Do not render checkboxes or a search button on Scryfall pages; users build a query by clicking multiple tag links.
+- Full search-result pages should batch visible card lookups with background `prefetchDeck` and only fall back to `fetchTags` for missing batch entries.
+
+Card identity on Scryfall full search pages comes from `a.print-langs-item.current[href]`, falling back to another `/card/{set}/{collector_number}/...` link inside the same `.card-profile`.
 
 ## Scryfall Tag Prefixes
 

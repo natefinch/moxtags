@@ -3,7 +3,7 @@
   "version": "1.7.0",
   "private": true,
   "type": "module",
-  "description": "Adds Scryfall Tagger art and card tags to Moxfield deck card menus",
+  "description": "Adds Scryfall Tagger art and card tags to Moxfield menus and Scryfall pages",
   "scripts": {
     "build": "node build.js",
     "build:chrome": "node build.js chrome",

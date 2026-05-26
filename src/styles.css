@@ -274,3 +274,89 @@
 .moxtags-long-menu::-webkit-scrollbar-thumb {
   border-radius: 3px;
 }
+
+/* ── Scryfall page tag sections ────────────────────────────────────── */
+.moxtags-scryfall-tags {
+  margin: 0;
+}
+
+.moxtags-scryfall-section {
+  margin-top: 0.75rem;
+}
+
+.moxtags-scryfall-section:first-of-type {
+  margin-top: 0;
+}
+
+.moxtags-scryfall-heading {
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.moxtags-scryfall-toggle {
+  appearance: none;
+  align-items: center;
+  background: none;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  gap: 0.35rem;
+  padding: 0;
+  text-align: left;
+}
+
+.moxtags-scryfall-toggle:hover .moxtags-scryfall-toggle-label,
+.moxtags-scryfall-toggle:focus .moxtags-scryfall-toggle-label {
+  text-decoration: underline;
+}
+
+.moxtags-scryfall-chevron {
+  border-bottom: 1.5px solid currentColor;
+  border-right: 1.5px solid currentColor;
+  height: 0.4rem;
+  opacity: 0.65;
+  transform: rotate(-45deg);
+  transition: transform 0.12s ease, opacity 0.12s ease;
+  width: 0.4rem;
+}
+
+.moxtags-scryfall-toggle[aria-expanded="true"] .moxtags-scryfall-chevron {
+  opacity: 0.85;
+  transform: rotate(45deg);
+}
+
+.moxtags-scryfall-section-body[hidden] {
+  display: none;
+}
+
+.moxtags-scryfall-section-body {
+  margin-top: 0.35rem;
+}
+
+.moxtags-scryfall-tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.75rem;
+}
+
+.moxtags-scryfall-tag-row {
+  width: auto;
+  padding: 0;
+  gap: 0.3rem;
+}
+
+.moxtags-scryfall-tag-link {
+  flex: 0 1 auto;
+  overflow: visible;
+  padding: 0;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+.moxtags-scryfall-message {
+  margin: 0;
+  padding: 0;
+}

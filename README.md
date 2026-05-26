@@ -1,13 +1,13 @@
 <p align="center"><img width="273" height="773" alt="image"  src="https://github.com/user-attachments/assets/5b4386cf-3e44-472f-a92d-51ddb96234b2" /></p>
 
 A browser extension (Chrome and Firefox) that adds **Scryfall Tagger** art
-tags and card tags to the card context menus on
-[Moxfield](https://moxfield.com) as well as adding tag auto-complete in
-search bars.
+tags and card tags to [Moxfield](https://moxfield.com) menus and search bars,
+and to Scryfall card pages and full search-result pages.
 
 ## MoxTags
 
-MoxTags brings Scryfall Tagger's community-curated tags directly into your Moxfield deck building experience.
+MoxTags brings Scryfall Tagger's community-curated tags directly into your
+Moxfield deck building experience and onto Scryfall card views.
 
 When you're building a deck on Moxfield, finding the right cards to fill a role can be surprisingly difficult. You know you need more ramp, or more removal, or another sacrifice outlet — but crafting the perfect search query is an exercise in frustration. Cards that do similar things are often worded completely differently, and even the most carefully written search will inevitably miss options you didn't think to look for.
 
@@ -17,7 +17,10 @@ Traditional text-based search works when you know exactly what you're looking fo
 
 That's where Scryfall's Tagger system shines. Thousands of Magic: The Gathering cards have been tagged by the community with intuitive functional labels like "ramp," "card-draw," "sacrifice-outlet," "board-wipe," and hundreds more. These tags capture what a card does, not just what it says, which means you can find cards by role and function rather than trying to guess every possible wording.
 
-The problem? Moxfield doesn't surface these tags anywhere. You'd have to leave your deck, go to Scryfall, look up each card, check its tags, and then switch back to Moxfield and manually search by those tags — constantly switching back and forth between sites. MoxTags eliminates that friction entirely.
+The problem? Moxfield doesn't surface these tags anywhere, and Scryfall's own
+card pages do not show Tagger tags inline with the card details. You'd have to
+open Tagger separately, look up each card, check its tags, and then manually
+copy those tags into searches. MoxTags eliminates that friction.
 
 ## Install
 
@@ -74,6 +77,13 @@ For example, right-click your Commander and see that it's tagged with "sacrifice
 <p  align="center"><img width="434" height="718" alt="image" src="https://github.com/user-attachments/assets/fc6f1477-146f-40bb-88d8-f43db037ba0f" /></p>
 <br/>
 <p  align="center"><img width="640" height="526" alt="image" src="https://github.com/user-attachments/assets/c53037c7-65b5-40e3-864c-17acbbe6dc98" /></p>
+
+### Scryfall Card Page Tags
+
+On Scryfall card pages and full search results, MoxTags adds collapsed Card
+Tags and Art Tags sections under each card's artist credit. Open either section
+to see that card's tags. Clicking a tag adds its `otag:` or `art:` query token
+to Scryfall's search box so you can build up a search from multiple tags.
 
 
 ## License
