@@ -91,7 +91,7 @@ Two tracking mechanisms identify which card was clicked:
 
 **Important:** Portal menus (appended to `<body>`) must prefer `lastOptionsCard` over `currentCard`. The general handler can incorrectly match ANY visible card name on the page (not just the clicked one). `currentCard` must be cleared when menus close and when the Options button is clicked to prevent stale state.
 
-For search result cards not in the deck, the exact printing is resolved by extracting the Moxfield card ID from the "View Details" link in the dropdown, then proxying a `GET https://api2.moxfield.com/v3/cards/rulings/{cardId}` call through `page_hook.js`.
+For search result cards not in the deck, the exact printing is resolved by extracting the Moxfield card ID from the "View Details" link in the dropdown, then proxying a `GET https://api2.moxfield.com/v2/cards/details/{cardId}` call through `page_hook.js`.
 
 ## Scryfall Tag Prefixes
 

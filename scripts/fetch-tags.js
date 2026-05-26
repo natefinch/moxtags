@@ -6,8 +6,8 @@
 
 import { writeFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
-import { buildReverseIndex, buildCompactIndex, splitCompactIndex } from '../src/shared/tags.js';
-import { ORACLE_TAGS_URL, ILLUSTRATION_TAGS_URL } from '../src/shared/constants.js';
+import { buildReverseIndex, buildCompactIndex, splitCompactIndex } from '../src/scryfall/tags.js';
+import { ORACLE_TAGS_URL, ILLUSTRATION_TAGS_URL } from '../src/scryfall/constants.js';
 
 const ROOT = join(import.meta.dirname, '..');
 const DATA_DIR = join(ROOT, 'src', 'data');

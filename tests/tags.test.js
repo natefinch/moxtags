@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import {
   buildReverseIndex, extractTagNames,
   buildCompactIndex, expandCompactIndex, splitCompactIndex,
-} from '../src/shared/tags.js';
+} from '../src/scryfall/tags.js';
 
 describe('buildReverseIndex', () => {
   it('maps IDs to tag entries', () => {

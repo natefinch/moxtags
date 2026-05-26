@@ -1,4 +1,4 @@
-// MoxTags — Card identity utilities (pure logic, no browser APIs).
+// Moxfield page interaction — Card identity utilities (pure logic, no browser APIs).
 
 /**
  * Extract a Moxfield card ID from a card page href.

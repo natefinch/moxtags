@@ -1,11 +1,25 @@
 // MoxTags – Content Script
 // Injects Scryfall Tagger art/card tags into Moxfield card context menus.
 
-import { buildCardMap } from './shared/deck.js';
+import { buildCardMap } from './moxfield/deck.js';
+import { parseCardIdFromHref } from './moxfield/card.js';
+import { findUnprocessedMoreOptionsButtons, extractCardInfoFromRow } from './moxfield/longlayout.js';
+import { MENU_KEYWORDS } from './moxfield/constants.js';
+import {
+  extractDeckId as _extractDeckId, identifyCard as _identifyCard,
+  scanForCardName as _scanForCardName, isCardMenu as _isCardMenu,
+  findSmallestMenu as _findSmallestMenu, findAnchorItem as _findAnchorItem,
+  extractCardIdFromMenu as _extractCardIdFromMenu,
+  addToSearchAndRun as _addToSearchAndRun,
+} from './moxfield/dom.js';
+import {
+  readInterceptedDeck as _readInterceptedDeck,
+  waitForInterceptedDeck as _waitForInterceptedDeck,
+} from './moxfield/intercept.js';
+import { lookupCardByMoxfieldId as _lookupCardByMoxfieldId } from './moxfield/api.js';
 import { filterAndSortTags, parseInput, renderCount, highlightTag } from './shared/autocomplete.js';
-import { ORACLE_PREFIXES, MENU_KEYWORDS, MAX_VISIBLE } from './shared/constants.js';
-import { parseCardIdFromHref } from './shared/card.js';
-import { findUnprocessedMoreOptionsButtons, extractCardInfoFromRow } from './shared/longlayout.js';
+import { ORACLE_PREFIXES, MAX_VISIBLE } from './shared/constants.js';
+import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
 
 (function () {
   'use strict';
@@ -25,16 +39,14 @@ import { findUnprocessedMoreOptionsButtons, extractCardInfoFromRow } from './sha
   // Persistent cache: Moxfield card ID → { set, cn }.
   // Avoids repeated Moxfield API lookups for the same card across sessions.
   const moxIdCache = new Map();
-  let moxIdCacheDirty = false;
-  const MOX_ID_CACHE_KEY = 'moxIdCache';
+  const moxIdPersister = createMoxIdPersister({ logFn: log });
 
   // Load the cache from storage on startup.
-  chrome.storage.local.get(MOX_ID_CACHE_KEY, (result) => {
-    const stored = result[MOX_ID_CACHE_KEY];
-    if (stored && typeof stored === 'object') {
-      for (const [id, val] of Object.entries(stored)) {
-        moxIdCache.set(id, val);
-      }
+  loadMoxIdCache().then(cached => {
+    for (const [id, val] of cached) {
+      moxIdCache.set(id, val);
+    }
+    if (cached.size > 0) {
       log('Moxfield ID cache loaded:', moxIdCache.size, 'entries');
     }
   });
@@ -108,82 +120,17 @@ import { findUnprocessedMoreOptionsButtons, extractCardInfoFromRow } from './sha
   }
 
   function extractDeckId() {
-    const m = location.pathname.match(/\/decks\/([A-Za-z0-9_-]+)/);
-    return m ? m[1] : null;
+    return _extractDeckId(location.pathname);
   }
 
   // ─── Deck data ─────────────────────────────────────────────────────
 
-  /**
-   * Read the intercepted deck JSON that page_hook.js stored in a hidden
-   * DOM element.  Returns the parsed object, or null if not found.
-   */
   function readInterceptedDeck() {
-    const el = document.getElementById('moxtags-deck-json');
-    log('readInterceptedDeck: element found:', !!el);
-    if (!el) return null;
-    const text = el.textContent;
-    log('readInterceptedDeck: textContent length:', text ? text.length : 0);
-    try {
-      const data = JSON.parse(text);
-      const keys = data ? Object.keys(data) : [];
-      log('readInterceptedDeck: parsed OK, top-level keys:', keys.slice(0, 15).join(', '));
-      return data;
-    } catch (e) {
-      warn('readInterceptedDeck: JSON parse error:', e.message);
-      return null;
-    }
+    return _readInterceptedDeck({ logFn: log });
   }
 
-  /**
-   * Wait for page_hook.js to store the intercepted deck data in the DOM.
-   * The hook sets data-moxtags-deck="ready" on <html> when the data is
-   * available.  We watch for that attribute via MutationObserver.
-   */
   function waitForInterceptedDeck(timeoutMs = 12000) {
-    return new Promise((resolve) => {
-      const attrVal = document.documentElement.getAttribute('data-moxtags-deck');
-      log('waitForInterceptedDeck: current attr value:', JSON.stringify(attrVal));
-
-      // Already available?
-      if (attrVal === 'ready') {
-        log('waitForInterceptedDeck: data already ready, reading now');
-        return resolve(readInterceptedDeck());
-      }
-
-      log('waitForInterceptedDeck: setting up MutationObserver, timeout:', timeoutMs, 'ms');
-      const obs = new MutationObserver((mutations) => {
-        for (const m of mutations) {
-          log('waitForInterceptedDeck: mutation detected –',
-            m.attributeName, '=', document.documentElement.getAttribute(m.attributeName));
-        }
-        if (document.documentElement.getAttribute('data-moxtags-deck') === 'ready') {
-          log('waitForInterceptedDeck: ready signal received via MutationObserver');
-          obs.disconnect();
-          clearTimeout(timer);
-          resolve(readInterceptedDeck());
-        }
-      });
-      obs.observe(document.documentElement, {
-        attributes: true,
-        attributeFilter: ['data-moxtags-deck'],
-      });
-
-      const timer = setTimeout(() => {
-        obs.disconnect();
-        // Check one more time in case we missed it
-        const finalVal = document.documentElement.getAttribute('data-moxtags-deck');
-        log('waitForInterceptedDeck: TIMED OUT after', timeoutMs, 'ms. Final attr:', JSON.stringify(finalVal));
-        const domEl = document.getElementById('moxtags-deck-json');
-        log('waitForInterceptedDeck: moxtags-deck-json element exists at timeout:', !!domEl);
-        if (finalVal === 'ready') {
-          log('waitForInterceptedDeck: attr is ready at timeout – reading anyway');
-          resolve(readInterceptedDeck());
-        } else {
-          resolve(null);
-        }
-      }, timeoutMs);
-    });
+    return _waitForInterceptedDeck({ timeoutMs, logFn: log });
   }
 
   async function fetchDeckData() {
@@ -288,30 +235,12 @@ import { findUnprocessedMoreOptionsButtons, extractCardInfoFromRow } from './sha
     }
   }
 
-  /**
-   * Walk up from the clicked element and look for an element whose
-   * trimmed textContent exactly matches a card name in the deck.
-   */
   function identifyCard(el) {
-    let node = el;
-    for (let i = 0; i < 15 && node && node !== document.body; i++) {
-      // Check anchor / span / div children for an exact card-name match.
-      const found = scanForCardName(node);
-      if (found) return found;
-      node = node.parentElement;
-    }
-    return null;
+    return _identifyCard(el, cardMap);
   }
 
   function scanForCardName(root) {
-    const candidates = [root, ...root.querySelectorAll('a, span, div, td, button')];
-    for (const el of candidates) {
-      const t = el.textContent?.trim();
-      if (t && t.length >= 2 && t.length <= 120 && cardMap.has(t.toLowerCase())) {
-        return t;
-      }
-    }
-    return null;
+    return _scanForCardName(root, cardMap);
   }
 
   // ─── Menu detection (MutationObserver) ─────────────────────────────
@@ -358,16 +287,7 @@ import { findUnprocessedMoreOptionsButtons, extractCardInfoFromRow } from './sha
   }
 
   function isCardMenu(el) {
-    if (!el || el === document.body || el === document.documentElement) return false;
-    // Skip our own injected elements.
-    if (el.closest?.('.moxtags-injected') || el.closest?.('.moxtags-submenu')) return false;
-    const text = el.textContent || '';
-    if (text.length < 20 || text.length > 8000) return false;
-    let hits = 0;
-    for (const kw of MENU_KEYWORDS) {
-      if (text.includes(kw)) hits++;
-    }
-    return hits >= 3;
+    return _isCardMenu(el, MENU_KEYWORDS);
   }
 
   // ─── Search result card dropdown detection ─────────────────────────
@@ -508,18 +428,8 @@ import { findUnprocessedMoreOptionsButtons, extractCardInfoFromRow } from './sha
     }
   }
 
-  /**
-   * Find the smallest (most specific) element in the subtree that
-   * matches the card-menu heuristic.
-   */
   function findSmallestMenu(root) {
-    if (!isCardMenu(root)) return null;
-    // Try to find a more specific child.
-    for (const child of root.children) {
-      const deeper = findSmallestMenu(child);
-      if (deeper) return deeper;
-    }
-    return root;
+    return _findSmallestMenu(root, MENU_KEYWORDS);
   }
 
   // ─── Long layout detection & injection ──────────────────────────────
@@ -885,24 +795,8 @@ import { findUnprocessedMoreOptionsButtons, extractCardInfoFromRow } from './sha
     }
   }
 
-  /**
-   * Find a menu item by its visible text. Returns the direct child of
-   * `container` that contains the target text.
-   */
   function findAnchorItem(container, text) {
-    // Search all descendants for the text.
-    const all = container.querySelectorAll('*');
-    for (const el of all) {
-      if (el.textContent?.trim() === text) {
-        // Walk up to the direct child of `container`.
-        let item = el;
-        while (item.parentElement && item.parentElement !== container) {
-          item = item.parentElement;
-        }
-        if (item.parentElement === container) return item;
-      }
-    }
-    return null;
+    return _findAnchorItem(container, text);
   }
 
   // ─── Tag fetching ────────────────────────────────────────────────────
@@ -954,128 +848,32 @@ import { findUnprocessedMoreOptionsButtons, extractCardInfoFromRow } from './sha
     });
   }
 
-  /**
-   * Extract the Moxfield card ID from a dropdown menu's "View Details" link.
-   * Link href format: /cards/{cardId}-{slug}
-   */
   function extractCardIdFromMenu(menu) {
-    const links = menu.querySelectorAll('a[href*="/cards/"]');
-    for (const link of links) {
-      const id = parseCardIdFromHref(link.getAttribute('href'));
-      if (id) return id;
-    }
-    return null;
+    return _extractCardIdFromMenu(menu);
   }
 
-  /**
-   * Look up a card's set/cn via Moxfield API (proxied through page_hook.js).
-   * Results are cached in chrome.storage.local to avoid repeat lookups.
-   * Returns { set, cn } or null on failure.
-   */
   function lookupCardByMoxfieldId(cardId) {
-    // Check in-memory cache first.
-    const cached = moxIdCache.get(cardId);
-    if (cached) {
-      log('Card lookup cache hit:', cardId, '→', cached.set, cached.cn);
-      return Promise.resolve(cached);
-    }
-
-    return new Promise((resolve) => {
-      const requestId = `${cardId}-${Date.now()}`;
-      const timeout = setTimeout(() => {
-        window.removeEventListener('message', handler);
-        log('Card lookup timed out for', cardId);
-        resolve(null);
-      }, 5000);
-
-      function handler(e) {
-        if (e.data?.type !== 'moxtags-card-result' || e.data.requestId !== requestId) return;
-        window.removeEventListener('message', handler);
-        clearTimeout(timeout);
-        if (e.data.error || !e.data.set || !e.data.cn) {
-          log('Card lookup failed:', cardId, e.data.error || 'missing set/cn');
-          resolve(null);
-        } else {
-          const result = { set: e.data.set, cn: e.data.cn };
-          log('Card lookup resolved:', cardId, '→', result.set, result.cn);
-          // Persist to cache.
-          moxIdCache.set(cardId, result);
-          persistMoxIdCache();
-          resolve(result);
-        }
-      }
-
-      window.addEventListener('message', handler);
-      window.postMessage({ type: 'moxtags-card-lookup', cardId, requestId });
+    return _lookupCardByMoxfieldId(cardId, {
+      cache: moxIdCache,
+      onResolved: () => persistMoxIdCache(),
+      logFn: log,
     });
   }
 
-  /** Debounced write of the moxfield ID cache to chrome.storage.local. */
-  let moxIdFlushTimer = null;
   function persistMoxIdCache() {
-    moxIdCacheDirty = true;
-    if (moxIdFlushTimer) return;
-    moxIdFlushTimer = setTimeout(() => {
-      moxIdFlushTimer = null;
-      if (!moxIdCacheDirty) return;
-      moxIdCacheDirty = false;
-      const obj = Object.fromEntries(moxIdCache);
-      chrome.storage.local.set({ [MOX_ID_CACHE_KEY]: obj }, () => {
-        log('Moxfield ID cache persisted:', moxIdCache.size, 'entries');
-      });
-    }, 2000);
+    moxIdPersister.persist(moxIdCache);
   }
 
-  /**
-   * Merge a batch of Moxfield card ID → { set, cn } entries from
-   * the deck JSON into the persistent cache.
-   */
   function mergeMoxIds(moxIds) {
-    if (!moxIds || moxIds.size === 0) return;
-    let added = 0;
-    for (const [id, val] of moxIds) {
-      if (!moxIdCache.has(id)) {
-        moxIdCache.set(id, val);
-        added++;
-      }
-    }
-    if (added > 0) {
-      log('Moxfield ID cache: merged', added, 'new entries from deck (total:', moxIdCache.size + ')');
-      persistMoxIdCache();
-    }
+    moxIdPersister.merge(moxIdCache, moxIds);
   }
 
   // ─── Search helpers ─────────────────────────────────────────────────
 
-  /**
-   * Append a tag query to the Moxfield search box and trigger a search.
-   * Returns true if the in-page search was triggered, false if we should
-   * fall back to full-page navigation.
-   */
   function addToSearchAndRun(query) {
-    const input = document.querySelector('#deckbox-search');
-    if (!input) {
-      warn('Search input not found, falling back to navigation');
-      return false;
-    }
-
-    const current = input.value.trim();
-    const newValue = current ? `${current} ${query}` : query;
-
-    // Use the native value setter so React picks up the change.
-    const nativeSetter = Object.getOwnPropertyDescriptor(
-      HTMLInputElement.prototype, 'value'
-    ).set;
-    nativeSetter.call(input, newValue);
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-
-    // Click the search button next to the input.
-    const form = input.closest('form');
-    const btn = form?.querySelector('button.btn-primary');
-    if (btn) {
-      btn.click();
-    }
-    return true;
+    const ok = _addToSearchAndRun(query);
+    if (!ok) warn('Search input not found, falling back to navigation');
+    return ok;
   }
 
   // ─── Rendering ─────────────────────────────────────────────────────

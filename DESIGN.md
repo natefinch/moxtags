@@ -424,7 +424,7 @@ via the Moxfield card ID found in the Options dropdown menu:
    `moxtags-card-lookup` message via `window.postMessage` to `page_hook.js`
    (which runs in the MAIN world and has the user's authenticated session).
    `page_hook.js` fetches
-   `https://api2.moxfield.com/v3/cards/rulings/{cardId}` and replies with
+   `https://api2.moxfield.com/v2/cards/details/{cardId}` and replies with
    the card's `set` and `cn` via `moxtags-card-result`.
 
 3. **Tag resolution:** With the resolved `set`/`cn`, the normal
@@ -859,9 +859,9 @@ return `true` from the `onMessage` listener to indicate asynchronous
   `sideboard`, `commanders`, etc.), each containing card entries with `name`,
   `set`, and `cn`/`collector_number` fields.
 
-### Moxfield Card Rulings API
+### Moxfield Card Details API
 
-- **Endpoint:** `GET https://api2.moxfield.com/v3/cards/rulings/{cardId}`
+- **Endpoint:** `GET https://api2.moxfield.com/v2/cards/details/{cardId}`
 - **Auth:** Requires the user's authenticated session (Cloudflare + cookies).
   Called from `page_hook.js` (MAIN world) which has access to the user's
   session.

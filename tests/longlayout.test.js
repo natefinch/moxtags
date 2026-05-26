@@ -5,7 +5,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseHTML } from 'linkedom';
 
-import { findUnprocessedMoreOptionsButtons, extractCardInfoFromRow } from '../src/shared/longlayout.js';
+import { findUnprocessedMoreOptionsButtons, extractCardInfoFromRow } from '../src/moxfield/longlayout.js';
 
 /**
  * Build a minimal long-layout card row matching the Moxfield DOM structure.

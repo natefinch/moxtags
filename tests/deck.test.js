@@ -4,7 +4,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildCardMap } from '../src/shared/deck.js';
+import { buildCardMap } from '../src/moxfield/deck.js';
 
 describe('buildCardMap', () => {
   it('parses v2 format (top-level boards with .card wrapper)', () => {

@@ -1,4 +1,4 @@
-// MoxTags — Deck data parsing (pure logic, no browser APIs).
+// Moxfield page interaction — Deck data parsing (pure logic, no browser APIs).
 
 import { BOARD_NAMES } from './constants.js';
 

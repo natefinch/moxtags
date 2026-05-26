@@ -1,4 +1,4 @@
-// MoxTags — Tag data utilities (pure logic, no browser APIs).
+// Scryfall API interaction — Tag data utilities (pure logic, no browser APIs).
 
 /**
  * Build a Map from id → [{name, slug}] from the tag data array.

@@ -4,7 +4,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { parseCardIdFromHref } from '../src/shared/card.js';
+import { parseCardIdFromHref } from '../src/moxfield/card.js';
 
 describe('parseCardIdFromHref', () => {
   it('extracts ID from relative href with slug', () => {

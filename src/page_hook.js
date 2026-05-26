@@ -171,11 +171,11 @@
   const origFetchForLookup = window.fetch;
 
   window.addEventListener('message', (e) => {
-    if (e.source !== window || e.data?.type !== 'moxtags-card-lookup') return;
+    if (e.data?.type !== 'moxtags-card-lookup') return;
     const { cardId, requestId } = e.data;
     if (!cardId) return;
 
-    const url = `https://api2.moxfield.com/v3/cards/rulings/${encodeURIComponent(cardId)}`;
+    const url = `https://api2.moxfield.com/v2/cards/details/${encodeURIComponent(cardId)}`;
     console.log(TAG, 'Card lookup request for', cardId);
 
     origFetchForLookup(url, { credentials: 'include', headers: { 'User-Agent': USER_AGENT } })
@@ -195,7 +195,7 @@
           cardId,
           set: set || null,
           cn: cn || null,
-        });
+        }, '*');
       })
       .catch(err => {
         console.warn(TAG, 'Card lookup failed for', cardId, ':', err.message);
@@ -204,7 +204,7 @@
           requestId,
           cardId,
           error: err.message,
-        });
+        }, '*');
       });
   });
 

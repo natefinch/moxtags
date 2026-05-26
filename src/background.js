@@ -18,13 +18,12 @@ try {
   console.warn('[MoxTags BG] importScripts failed:', e.message);
 }
 
-import { buildReverseIndex, extractTagNames, expandCompactIndex } from './shared/tags.js';
-import {
-  ORACLE_TAGS_URL,
-  ILLUSTRATION_TAGS_URL,
-  SCRYFALL_CARD_API,
-  REFRESH_INTERVAL_MS,
-} from './shared/constants.js';
+import { expandCompactIndex } from './scryfall/tags.js';
+import { fetchTagIndexes, fetchCard, fetchCardByName, fetchCardCollection } from './scryfall/api.js';
+import { REFRESH_INTERVAL_MS } from './shared/constants.js';
+import { loadTagIndexes, saveTagIndexes, isStale } from './cache/tag-index.js';
+import { loadCardMapExtras, saveCardMapExtras } from './cache/card-map.js';
+import { scheduleRefresh, onRefreshAlarm } from './cache/refresh.js';
 
 // User-Agent header sent on all outgoing requests.
 const USER_AGENT = 'MoxTags/' + chrome.runtime.getManifest().version;
@@ -79,8 +78,21 @@ function ensureCardMap() {
         console.warn('[MoxTags BG] ensureCardMap: error:', err.message, err.stack);
       }
       // Load any extra card mappings discovered at runtime.
-      await loadCardMapExtras().catch(err =>
-        console.warn('[MoxTags BG] Failed to load card map extras:', err.message));
+      try {
+        const extras = await loadCardMapExtras();
+        let count = 0;
+        for (const [key, ids] of extras) {
+          if (!cardIdCache.has(key)) {
+            cardIdCache.set(key, ids);
+            count++;
+          }
+        }
+        if (count > 0) {
+          console.log(`[MoxTags BG] Loaded ${count} card map extras from storage.`);
+        }
+      } catch (err) {
+        console.warn('[MoxTags BG] Failed to load card map extras:', err.message);
+      }
     })();
   } else {
     console.log('[MoxTags BG] ensureCardMap: already loading, reusing promise');
@@ -144,7 +156,7 @@ function setupUserAgentRule() {
 
 chrome.runtime.onInstalled.addListener(() => {
   setupUserAgentRule();
-  scheduleRefresh();
+  scheduleRefresh('refreshTagData', 24 * 60);
   // Start downloading tag data immediately so it's ready when the user
   // first visits a deck page.
   ensureIndexes().catch(err =>
@@ -153,7 +165,7 @@ chrome.runtime.onInstalled.addListener(() => {
 
 chrome.runtime.onStartup.addListener(() => {
   setupUserAgentRule();
-  scheduleRefresh();
+  scheduleRefresh('refreshTagData', 24 * 60);
 });
 
 // ─── Message handling ────────────────────────────────────────────────
@@ -211,10 +223,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
 // ─── Status for popup ─────────────────────────────────────────────────
 async function getStatus() {
-  const stored = await chrome.storage.local.get(['tagDataTimestamp']);
+  const stored = await loadTagIndexes();
   return {
     refreshing,
-    tagDataTimestamp: stored.tagDataTimestamp || null,
+    tagDataTimestamp: stored?.timestamp || null,
     oracleCount: oracleIndex ? oracleIndex.size : null,
     illustrationCount: illustrationIndex ? illustrationIndex.size : null,
     lastError: lastRefreshError,
@@ -259,13 +271,13 @@ async function fetchTags(set, number) {
         cardIdCache.set(key, ids);
       } else {
         console.log(`[MoxTags BG] fetchTags: ${key} NOT in bundled map, falling back to Scryfall API`);
-        const cardUrl = `${SCRYFALL_CARD_API}/${encodeURIComponent(set)}/${encodeURIComponent(number)}`;
-        const resp = await fetch(cardUrl, { headers: { 'User-Agent': USER_AGENT }, credentials: 'omit' });
-        if (!resp.ok) {
-          return { ok: false, error: `Scryfall API error: HTTP ${resp.status}` };
+        try {
+          ids = await fetchCard(set, number, fetch, {
+            headers: { 'User-Agent': USER_AGENT },
+          });
+        } catch (err) {
+          return { ok: false, error: err.message };
         }
-        const card = await resp.json();
-        ids = { oracleId: card.oracle_id, illustrationId: card.illustration_id };
         cardIdCache.set(key, ids);
         persistCardMapExtra(key, ids);
       }
@@ -294,20 +306,15 @@ async function fetchTagsByName(name) {
     // Use Scryfall's named card API to find the card.
     // This returns the default printing — used as a fallback when the exact
     // printing cannot be resolved via the Moxfield card ID.
-    const url = `${SCRYFALL_CARD_API}/named?exact=${encodeURIComponent(name)}`;
-    const resp = await fetch(url, { headers: { 'User-Agent': USER_AGENT }, credentials: 'omit' });
-    if (!resp.ok) {
-      return { ok: false, error: `Scryfall API error: HTTP ${resp.status}` };
-    }
-    const card = await resp.json();
-    const oracleId = card.oracle_id;
-    const illustrationId = card.illustration_id;
+    const ids = await fetchCardByName(name, fetch, {
+      headers: { 'User-Agent': USER_AGENT },
+    });
 
-    const cardTags = oracleId && oracleIndex
-      ? (oracleIndex.get(oracleId) || [])
+    const cardTags = ids.oracleId && oracleIndex
+      ? (oracleIndex.get(ids.oracleId) || [])
       : [];
-    const artTags = illustrationId && illustrationIndex
-      ? (illustrationIndex.get(illustrationId) || [])
+    const artTags = ids.illustrationId && illustrationIndex
+      ? (illustrationIndex.get(ids.illustrationId) || [])
       : [];
 
     return { ok: true, artTags, cardTags, cacheLoading: refreshing };
@@ -349,52 +356,21 @@ async function prefetchDeck(cards) {
   if (needed.length > 0) {
     console.log(`[MoxTags BG] Prefetching ${needed.length} cards from Scryfall…`);
 
-    // Batch into groups of 75 (Scryfall collection limit).
-    const BATCH = 75;
-    for (let i = 0; i < needed.length; i += BATCH) {
-      const batch = needed.slice(i, i + BATCH);
-      const identifiers = batch.map(c => ({
-        set: c.set,
-        collector_number: c.cn,
-      }));
+    const resolved = await fetchCardCollection(needed, fetch, {
+      headers: { 'User-Agent': USER_AGENT },
+    });
 
-      try {
-        const resp = await fetch(`${SCRYFALL_CARD_API}/collection`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'User-Agent': USER_AGENT },
-          credentials: 'omit',
-          body: JSON.stringify({ identifiers }),
-        });
-        if (!resp.ok) {
-          console.warn(`[MoxTags BG] Collection batch failed: HTTP ${resp.status}`);
-          continue;
-        }
-        const data = await resp.json();
-        const newExtras = {};
-        for (const card of (data.data || [])) {
-          const set = (card.set || '').toLowerCase();
-          const cn  = card.collector_number || '';
-          if (set && cn) {
-            const ids = {
-              oracleId: card.oracle_id,
-              illustrationId: card.illustration_id,
-            };
-            cardIdCache.set(`${set}/${cn}`, ids);
-            newExtras[`${set}/${cn}`] = ids;
-          }
-        }
-        if (Object.keys(newExtras).length > 0) {
-          persistCardMapExtras(newExtras);
-        }
-      } catch (err) {
-        console.warn('[MoxTags BG] Collection batch error:', err.message);
-      }
-
-      // Scryfall asks for 50-100ms between requests.
-      if (i + BATCH < needed.length) {
-        await new Promise(r => setTimeout(r, 100));
-      }
+    // Merge resolved cards into cache and persist new discoveries.
+    const newExtras = {};
+    for (const [key, ids] of resolved) {
+      cardIdCache.set(key, ids);
+      newExtras[key] = ids;
     }
+    if (Object.keys(newExtras).length > 0) {
+      saveCardMapExtras(newExtras).catch(err =>
+        console.warn('[MoxTags BG] Failed to persist card map extras:', err.message));
+    }
+
     console.log(`[MoxTags BG] Prefetch done. Card ID cache: ${cardIdCache.size} entries.`);
   }
 
@@ -433,22 +409,18 @@ async function ensureIndexes() {
   console.log('[MoxTags BG] ensureIndexes: loading…');
 
   // Try loading from storage (freshest persisted data).
-  const stored = await chrome.storage.local.get([
-    'oracleIndex', 'illustrationIndex', 'tagDataTimestamp',
-    'oracleTagNames', 'artTagNames',
-  ]);
+  const stored = await loadTagIndexes();
 
-  if (stored.oracleIndex && stored.illustrationIndex) {
-    oracleIndex = new Map(stored.oracleIndex);
-    illustrationIndex = new Map(stored.illustrationIndex);
-    oracleTagNames = stored.oracleTagNames || null;
-    artTagNames = stored.artTagNames || null;
+  if (stored) {
+    oracleIndex = stored.oracleIndex;
+    illustrationIndex = stored.illustrationIndex;
+    oracleTagNames = stored.oracleTagNames;
+    artTagNames = stored.artTagNames;
     console.log('[MoxTags BG] Indexes loaded from storage.',
       oracleIndex.size, 'oracle IDs,', illustrationIndex.size, 'illustration IDs');
 
     // Check if refresh is needed (in background, don't block).
-    const age = Date.now() - (stored.tagDataTimestamp || 0);
-    if (age > REFRESH_INTERVAL_MS) {
+    if (isStale(stored.timestamp, REFRESH_INTERVAL_MS)) {
       refreshTagData().catch(err =>
         console.warn('[MoxTags BG] Background refresh failed:', err.message));
     }
@@ -500,55 +472,11 @@ function loadBundledData() {
 // ─── Card map extras (newly-discovered cards) ────────────────────────
 
 /**
- * Persist a single newly-discovered card mapping to chrome.storage.local.
+ * Persist a single newly-discovered card mapping via cache.
  */
 function persistCardMapExtra(key, ids) {
-  persistCardMapExtras({ [key]: ids });
-}
-
-/**
- * Persist multiple newly-discovered card mappings to chrome.storage.local.
- * Merges with any previously stored extras.
- */
-async function persistCardMapExtras(newEntries) {
-  const count = Object.keys(newEntries).length;
-  console.log(`[MoxTags BG] persistCardMapExtras: saving ${count} new entries`);
-  try {
-    const stored = await chrome.storage.local.get(['cardMapExtras']);
-    const extras = stored.cardMapExtras || {};
-    const prevCount = Object.keys(extras).length;
-    for (const [key, ids] of Object.entries(newEntries)) {
-      extras[key] = { o: ids.oracleId, i: ids.illustrationId };
-    }
-    await chrome.storage.local.set({ cardMapExtras: extras });
-    console.log(`[MoxTags BG] persistCardMapExtras: stored ${Object.keys(extras).length} total extras (was ${prevCount})`);
-  } catch (err) {
-    console.warn('[MoxTags BG] Failed to persist card map extras:', err.message);
-  }
-}
-
-/**
- * Load previously-discovered card mappings from chrome.storage.local
- * into the in-memory cache.
- */
-async function loadCardMapExtras() {
-  try {
-    const stored = await chrome.storage.local.get(['cardMapExtras']);
-    const extras = stored.cardMapExtras;
-    if (!extras) return;
-    let count = 0;
-    for (const [key, ids] of Object.entries(extras)) {
-      if (!cardIdCache.has(key)) {
-        cardIdCache.set(key, { oracleId: ids.o, illustrationId: ids.i });
-        count++;
-      }
-    }
-    if (count > 0) {
-      console.log(`[MoxTags BG] Loaded ${count} card map extras from storage.`);
-    }
-  } catch (err) {
-    console.warn('[MoxTags BG] Failed to load card map extras:', err.message);
-  }
+  saveCardMapExtras({ [key]: ids }).catch(err =>
+    console.warn('[MoxTags BG] Failed to persist card map extra:', err.message));
 }
 
 /**
@@ -561,39 +489,22 @@ async function refreshTagData() {
   console.log('[MoxTags BG] Fetching tag data from Scryfall…');
 
   try {
-    const [oracleResp, illustrationResp] = await Promise.all([
-      fetch(ORACLE_TAGS_URL, { headers: { 'User-Agent': USER_AGENT }, credentials: 'omit' }),
-      fetch(ILLUSTRATION_TAGS_URL, { headers: { 'User-Agent': USER_AGENT }, credentials: 'omit' }),
-    ]);
+    const result = await fetchTagIndexes(fetch, {
+      headers: { 'User-Agent': USER_AGENT },
+    });
 
-    if (!oracleResp.ok || !illustrationResp.ok) {
-      throw new Error(`Tag fetch failed: oracle=${oracleResp.status}, illustration=${illustrationResp.status}`);
-    }
-
-    const [oracleData, illustrationData] = await Promise.all([
-      oracleResp.json(),
-      illustrationResp.json(),
-    ]);
-
-    // Build reverse indexes: id → [{name, slug}]
-    oracleIndex = buildReverseIndex(oracleData.data, 'oracle_ids');
-    illustrationIndex = buildReverseIndex(illustrationData.data, 'illustration_ids');
-
-    // Build sorted unique tag name lists for autocomplete.
-    oracleTagNames = extractTagNames(oracleData.data);
-    artTagNames = extractTagNames(illustrationData.data);
+    oracleIndex = result.oracleIndex;
+    illustrationIndex = result.illustrationIndex;
+    oracleTagNames = result.oracleTagNames;
+    artTagNames = result.artTagNames;
 
     console.log('[MoxTags BG] Indexes built.',
       oracleIndex.size, 'oracle IDs,', illustrationIndex.size, 'illustration IDs,',
       oracleTagNames.length, 'oracle tag names,', artTagNames.length, 'art tag names');
 
-    // Persist to storage as arrays of [key, value] entries.
-    await chrome.storage.local.set({
-      oracleIndex: [...oracleIndex.entries()],
-      illustrationIndex: [...illustrationIndex.entries()],
-      oracleTagNames,
-      artTagNames,
-      tagDataTimestamp: Date.now(),
+    // Persist to storage.
+    await saveTagIndexes({
+      oracleIndex, illustrationIndex, oracleTagNames, artTagNames,
     });
 
     console.log('[MoxTags BG] Tag data cached to storage.');
@@ -607,29 +518,4 @@ async function refreshTagData() {
 }
 
 // ─── Scheduled refresh ──────────────────────────────────────────────
-
-/**
- * Schedule the next tag data refresh. Uses chrome.alarms to fire
- * roughly once per day with random jitter within a 1-hour window
- * to spread load across users.
- */
-function scheduleRefresh() {
-  // Random jitter: 0–60 minutes within the next 24h window.
-  const jitterMinutes = Math.floor(Math.random() * 60);
-  const delayMinutes = 24 * 60 + jitterMinutes;
-
-  chrome.alarms.create('refreshTagData', { delayInMinutes: delayMinutes });
-  console.log(`[MoxTags BG] Next tag refresh scheduled in ${delayMinutes} minutes.`);
-}
-
-chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === 'refreshTagData') {
-    refreshTagData()
-      .then(() => scheduleRefresh())
-      .catch(err => {
-        console.warn('[MoxTags BG] Scheduled refresh failed:', err.message);
-        // Retry in 1 hour.
-        chrome.alarms.create('refreshTagData', { delayInMinutes: 60 });
-      });
-  }
-});
+onRefreshAlarm('refreshTagData', () => refreshTagData());

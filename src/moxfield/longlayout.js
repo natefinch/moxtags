@@ -1,4 +1,4 @@
-// MoxTags — Long layout detection helpers (pure logic with minimal DOM).
+// Moxfield page interaction — Long layout detection helpers (pure logic with minimal DOM).
 //
 // These helpers detect and extract card information from Moxfield's search
 // results "long" layout, where each card is a full-width row with action
