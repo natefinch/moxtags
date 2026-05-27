@@ -7,6 +7,7 @@ import {
   parseCardIdentityFromPath,
   buildTagSearchUrl,
 } from './shared/scryfall-page.js';
+import { bindPersistentCollapsibleSection } from './shared/collapsible-state.js';
 
 (function () {
   'use strict';
@@ -226,13 +227,13 @@ import {
   function buildTagSection(title, prefix, tags) {
     const section = document.createElement('div');
     section.className = 'moxtags-scryfall-section';
+    const sectionKey = tagSectionKey(prefix);
 
     const heading = document.createElement('h3');
     heading.className = 'moxtags-scryfall-heading';
     const toggle = document.createElement('button');
     toggle.type = 'button';
     toggle.className = 'moxtags-scryfall-toggle';
-    toggle.setAttribute('aria-expanded', 'false');
 
     const label = document.createElement('span');
     label.className = 'moxtags-scryfall-toggle-label';
@@ -249,13 +250,18 @@ import {
 
     const body = document.createElement('div');
     body.className = 'moxtags-scryfall-section-body';
-    body.hidden = true;
     section.appendChild(body);
 
+    const toggleExpanded = bindPersistentCollapsibleSection({
+      site: 'scryfall',
+      section: sectionKey,
+      toggle,
+      body,
+      onError: warn,
+    });
+
     toggle.addEventListener('click', () => {
-      const expanded = !body.hidden;
-      body.hidden = expanded;
-      toggle.setAttribute('aria-expanded', expanded ? 'false' : 'true');
+      toggleExpanded();
     });
 
     if (tags.length === 0) {
@@ -275,6 +281,10 @@ import {
     }
 
     return section;
+  }
+
+  function tagSectionKey(prefix) {
+    return prefix === 'art' ? 'art-tags' : 'card-tags';
   }
 
   function buildTagRow(prefix, tag) {

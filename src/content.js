@@ -20,6 +20,7 @@ import {
 import { lookupCardByMoxfieldId as _lookupCardByMoxfieldId } from './moxfield/api.js';
 import { filterAndSortTags, parseInput, renderCount, highlightTag } from './shared/autocomplete.js';
 import { ORACLE_PREFIXES, MAX_VISIBLE } from './shared/constants.js';
+import { bindPersistentCollapsibleSection } from './shared/collapsible-state.js';
 import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
 
 (function () {
@@ -1220,6 +1221,7 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
   function buildCardOverlayTagSection(title, tags, searchPrefix, selection) {
     const section = document.createElement('section');
     section.className = 'moxtags-moxfield-overlay-section';
+    const sectionKey = tagSectionKey(searchPrefix);
 
     const heading = document.createElement('h3');
     heading.className = 'moxtags-moxfield-overlay-heading';
@@ -1227,7 +1229,6 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
     const toggle = document.createElement('button');
     toggle.type = 'button';
     toggle.className = 'moxtags-moxfield-overlay-toggle';
-    toggle.setAttribute('aria-expanded', 'false');
 
     const chevron = document.createElement('span');
     chevron.className = 'moxtags-moxfield-overlay-chevron';
@@ -1242,7 +1243,6 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
 
     const body = document.createElement('div');
     body.className = 'moxtags-moxfield-overlay-section-body';
-    body.hidden = true;
 
     const list = document.createElement('div');
     list.className = 'moxtags-moxfield-overlay-tag-list';
@@ -1252,13 +1252,23 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
     body.appendChild(list);
     section.appendChild(body);
 
+    const toggleExpanded = bindPersistentCollapsibleSection({
+      site: 'moxfield',
+      section: sectionKey,
+      toggle,
+      body,
+      onError: warn,
+    });
+
     toggle.addEventListener('click', () => {
-      const expanded = toggle.getAttribute('aria-expanded') === 'true';
-      toggle.setAttribute('aria-expanded', expanded ? 'false' : 'true');
-      body.hidden = expanded;
+      toggleExpanded();
     });
 
     return section;
+  }
+
+  function tagSectionKey(prefix) {
+    return prefix === 'art' ? 'art-tags' : 'card-tags';
   }
 
   function buildCardOverlayTagRow(tag, searchPrefix, selection) {

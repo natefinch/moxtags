@@ -7,6 +7,7 @@ import {
   parseCardIdentityFromAlt,
   parseCardIdentityFromDeckCard,
 } from './shared/archidekt-page.js';
+import { bindPersistentCollapsibleSection } from './shared/collapsible-state.js';
 
 (function () {
   'use strict';
@@ -439,6 +440,7 @@ import {
   function buildDetailsTagSection(title, tags, prefix, selection) {
     const section = document.createElement('section');
     section.className = 'moxtags-archidekt-details-section';
+    const sectionKey = tagSectionKey(prefix);
 
     const heading = document.createElement('h4');
     heading.className = 'moxtags-archidekt-details-heading';
@@ -446,7 +448,6 @@ import {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'moxtags-archidekt-details-toggle';
-    button.setAttribute('aria-expanded', 'false');
 
     const chevron = document.createElement('span');
     chevron.className = 'moxtags-archidekt-details-chevron';
@@ -461,7 +462,6 @@ import {
 
     const body = document.createElement('div');
     body.className = 'moxtags-archidekt-details-section-body';
-    body.hidden = true;
 
     if (tags.length === 0) {
       const empty = document.createElement('p');
@@ -477,16 +477,26 @@ import {
       body.appendChild(list);
     }
 
+    const toggleExpanded = bindPersistentCollapsibleSection({
+      site: 'archidekt',
+      section: sectionKey,
+      toggle: button,
+      body,
+      onError: warn,
+    });
+
     button.addEventListener('click', (event) => {
       event.preventDefault();
       event.stopPropagation();
-      const expanded = button.getAttribute('aria-expanded') === 'true';
-      button.setAttribute('aria-expanded', String(!expanded));
-      body.hidden = expanded;
+      toggleExpanded();
     });
 
     section.append(heading, body);
     return section;
+  }
+
+  function tagSectionKey(prefix) {
+    return prefix === 'art' ? 'art-tags' : 'card-tags';
   }
 
   function buildDetailsTagRow(tag, prefix, selection) {
