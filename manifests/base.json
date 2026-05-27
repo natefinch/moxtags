@@ -4,7 +4,7 @@
   "version": "1.7.0",
   "author": "Nate Finch",
   "homepage_url": "https://github.com/natefinch/moxtags",
-  "description": "Adds Scryfall Tagger art and card tags to Moxfield menus and Scryfall pages",
+  "description": "Adds Scryfall Tagger art and card tags to Moxfield, Scryfall, and Archidekt pages",
   "permissions": [
     "storage",
     "unlimitedStorage",
@@ -55,6 +55,19 @@
       ],
       "js": [
         "scryfall_content.js"
+      ],
+      "css": [
+        "styles.css"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://archidekt.com/decks/*",
+        "https://www.archidekt.com/decks/*"
+      ],
+      "js": [
+        "archidekt_content.js"
       ],
       "css": [
         "styles.css"

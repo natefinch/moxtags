@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-MoxTags is a browser extension that injects Scryfall Tagger art/card tags into Moxfield (MTG deck builder) UI elements — context menus, Options dropdowns, tag dialogs, and search autocomplete — and into Scryfall card and full search-result pages.
+MoxTags is a browser extension that injects Scryfall Tagger art/card tags into Moxfield (MTG deck builder) UI elements — context menus, Options dropdowns, tag dialogs, and search autocomplete — as well as Scryfall card/search pages and Archidekt deck card menus/details.
 
 ## Architecture
 
@@ -10,10 +10,11 @@ The extension uses content scripts plus a background service worker across diffe
 
 - **`src/content.js`** — Runs in the **ISOLATED world**. Handles all DOM inspection and injection (menus, dialogs, autocomplete). Communicates with background.js via `chrome.runtime.sendMessage` and with page_hook.js via `window.postMessage`.
 - **`src/scryfall_content.js`** — Runs in the **ISOLATED world** on Scryfall card and full search-result pages. Injects card/art tag sections under each `p.card-text-artist` and uses background.js for tag lookup.
+- **`src/archidekt_content.js`** — Runs in the **ISOLATED world** on Archidekt deck pages. Injects Archidekt-styled Art Tags/Card Tags flyout submenus into card context menus and collapsed tag sections into card details, using exact printing identity from card image alt text or embedded deck card data.
 - **`src/page_hook.js`** — Runs in the **MAIN world** (injected at `document_start`). Intercepts `fetch`/`XHR` to capture deck JSON data. Also proxies Moxfield API calls on behalf of content.js, since it has access to the user's authenticated session cookies.
 - **`src/background.js`** — Service worker. Handles Scryfall API calls, tag index caching, and card data lookups.
 
-Shared pure functions live in `src/shared/` (e.g., `autocomplete.js`, `scryfall-page.js`, `constants.js`).
+Shared pure functions live in `src/shared/` (e.g., `autocomplete.js`, `archidekt-page.js`, `scryfall-page.js`, `constants.js`).
 
 ## Build & Test
 
@@ -105,6 +106,26 @@ For search result cards not in the deck, the exact printing is resolved by extra
 - Full search-result pages should batch visible card lookups with background `prefetchDeck` and only fall back to `fetchTags` for missing batch entries.
 
 Card identity on Scryfall full search pages comes from `a.print-langs-item.current[href]`, falling back to another `/card/{set}/{collector_number}/...` link inside the same `.card-profile`.
+
+## Archidekt DOM Patterns
+
+### Deck Page Card Context Menu
+- Card image alt text uses `Card Name (set) collector-number`, e.g. `Sophia, Dogged Detective (mkc) 8`.
+- Text-view rows expose only card names in DOM; resolve those through `__NEXT_DATA__.props.pageProps.redux.deck.cardMap` when the name maps to a unique exact `{ setCode, collectorNumber }`.
+- Parse the rightmost `(<set>) <collector>` suffix so names with parentheses and double-faced names still work.
+- Card images live under class fragments like `basicCard_container`, `contextMenu_wrapper`, and `deckCardWrapper_container`; match CSS-module class fragments defensively, not full generated class names.
+- The right-click card menu is portaled under `#contextMenuOverlay`.
+- The right-click card menu panel class includes `deckCardContextMenu_contextMenu`; image/stacks three-dot card menus include `imageCard_extrasMenu`; text-view three-dot card menus include `textViewCard_dropdown`. Do not inject into category/section overflow menus unless a card identity was captured from the triggering card DOM.
+- MoxTags injects a divider and two Archidekt-styled flyout submenus above the `Ctrl + Right Click for standard menu` footer when present.
+- Tag links and combined checkbox searches should open Archidekt's Card Search overlay, click the `Syntax search` tab, populate the `scryfallSearchForm_input`/`phatInput_input` text input with `otag:`/`art:` syntax, dispatch React-safe input/change events, and submit the native search form.
+- If the card menu was opened from a card inside Archidekt search results, append selected tag tokens to the current Syntax Search query instead of replacing it; avoid duplicate exact tokens.
+- Do not silently fall back to name lookup for art tags, because name lookup resolves Scryfall's default printing and can show wrong illustration tags.
+
+### Card Details Overlay
+- Card details overlays use class fragments like `cardDetailsOverlay_container`; the Card Info tab body contains `cardInfo_extraInfo`.
+- Insert `moxtags-archidekt-details-tags` immediately before the child row whose text is `Legalities:`.
+- Resolve details identity from the overlay card image alt text first; only fall back to embedded deck data if the visible title maps to a unique exact printing.
+- Details tag sections are collapsed Card Tags and Art Tags blocks with tag pills. Clicking a pill should run the same native Archidekt Syntax Search flow as menu tag links.
 
 ## Scryfall Tag Prefixes
 
