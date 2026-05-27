@@ -393,11 +393,50 @@ import {
       return;
     }
 
-    wrapper.appendChild(buildDetailsTagSection('Card Tags', tags.cardTags, 'otag'));
-    wrapper.appendChild(buildDetailsTagSection('Art Tags', tags.artTags, 'art'));
+    const selection = buildDetailsSelectionController(wrapper);
+    wrapper.appendChild(buildDetailsTagSection('Card Tags', tags.cardTags, 'otag', selection));
+    wrapper.appendChild(buildDetailsTagSection('Art Tags', tags.artTags, 'art', selection));
+    wrapper.appendChild(selection.searchButton);
   }
 
-  function buildDetailsTagSection(title, tags, prefix) {
+  function buildDetailsSelectionController(wrapper) {
+    const selected = new Map();
+    const searchButton = document.createElement('button');
+    searchButton.type = 'button';
+    searchButton.className = 'moxtags-archidekt-details-search-btn';
+    searchButton.hidden = true;
+    searchButton.textContent = 'Search by tags';
+
+    const updateSearchButton = () => {
+      searchButton.hidden = selected.size === 0;
+      searchButton.textContent = selected.size > 0
+        ? `Search by tags (${selected.size})`
+        : 'Search by tags';
+    };
+
+    searchButton.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (selected.size === 0) return;
+      closeCardDetailsOverlay(wrapper.closest(CARD_DETAILS_OVERLAY_SELECTOR));
+      searchArchidektForTags([...selected.values()]);
+    });
+
+    return {
+      searchButton,
+      setTag(prefix, tag, checked) {
+        const key = `${prefix}:${tag.slug}`;
+        if (checked) {
+          selected.set(key, { prefix, slug: tag.slug });
+        } else {
+          selected.delete(key);
+        }
+        updateSearchButton();
+      },
+    };
+  }
+
+  function buildDetailsTagSection(title, tags, prefix, selection) {
     const section = document.createElement('section');
     section.className = 'moxtags-archidekt-details-section';
 
@@ -433,7 +472,7 @@ import {
       const list = document.createElement('div');
       list.className = 'moxtags-archidekt-details-tag-list';
       for (const tag of tags) {
-        list.appendChild(buildDetailsTagLink(tag, prefix));
+        list.appendChild(buildDetailsTagRow(tag, prefix, selection));
       }
       body.appendChild(list);
     }
@@ -448,6 +487,21 @@ import {
 
     section.append(heading, body);
     return section;
+  }
+
+  function buildDetailsTagRow(tag, prefix, selection) {
+    const row = document.createElement('span');
+    row.className = 'moxtags-archidekt-details-tag-row';
+
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.className = 'moxtags-archidekt-details-tag-cb';
+    checkbox.addEventListener('click', event => event.stopPropagation());
+    checkbox.addEventListener('change', () => selection.setTag(prefix, tag, checkbox.checked));
+    row.appendChild(checkbox);
+
+    row.appendChild(buildDetailsTagLink(tag, prefix));
+    return row;
   }
 
   function buildDetailsTagLink(tag, prefix) {
@@ -612,7 +666,7 @@ import {
     const searchButton = document.createElement('button');
     searchButton.type = 'button';
     searchButton.className = 'moxtags-archidekt-search-btn';
-    searchButton.textContent = 'Search Archidekt';
+    searchButton.textContent = 'Search Archidekt...';
     searchButton.style.display = 'none';
     submenu.appendChild(searchButton);
 
@@ -620,11 +674,11 @@ import {
     const updateSearchButton = () => {
       if (checked.size === 0) {
         searchButton.style.display = 'none';
-        searchButton.textContent = 'Search Archidekt';
+        searchButton.textContent = 'Search Archidekt...';
         return;
       }
       searchButton.style.display = '';
-      searchButton.textContent = `Search Archidekt (${checked.size})`;
+      searchButton.textContent = `(${checked.size}) Search Archidekt...`;
     };
 
     searchButton.addEventListener('click', (event) => {

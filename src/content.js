@@ -4,6 +4,7 @@
 import { buildCardMap } from './moxfield/deck.js';
 import { parseCardIdFromHref } from './moxfield/card.js';
 import { findUnprocessedMoreOptionsButtons, extractCardInfoFromRow } from './moxfield/longlayout.js';
+import { extractCardOverlayInfo, findLegalityGrid } from './moxfield/overlay.js';
 import { MENU_KEYWORDS } from './moxfield/constants.js';
 import {
   extractDeckId as _extractDeckId, identifyCard as _identifyCard,
@@ -250,6 +251,7 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
         if (node.nodeType !== Node.ELEMENT_NODE) continue;
         scanForMenu(node);
         scanForDialog(node);
+        scanForCardOverlay(node);
         scanForCardDropdown(node);
         scanForLongLayout(node);
       }
@@ -257,6 +259,7 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
       if (mut.type === 'attributes' && mut.target?.nodeType === Node.ELEMENT_NODE) {
         scanForMenu(mut.target);
         scanForDialog(mut.target);
+        scanForCardOverlay(mut.target);
         scanForCardDropdown(mut.target);
       }
     }
@@ -1026,6 +1029,266 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
     // Restore — CSS :hover keeps the submenu visible.
     submenu.style.display = '';
     submenu.style.visibility = '';
+  }
+
+  // ─── Card view overlay tag sections ─────────────────────────────────
+  // Moxfield renders card details as a modal. Add collapsed tag sections
+  // immediately above the format legality grid.
+
+  function scanForCardOverlay(el) {
+    const overlay = findCardOverlay(el);
+    if (overlay) {
+      injectTagsIntoCardOverlay(overlay);
+      return;
+    }
+
+    let parent = el.parentElement;
+    for (let i = 0; i < 10 && parent && parent !== document.body; i++) {
+      if (isCardOverlay(parent)) {
+        injectTagsIntoCardOverlay(parent);
+        return;
+      }
+      parent = parent.parentElement;
+    }
+  }
+
+  function findCardOverlay(root) {
+    if (isCardOverlay(root)) return root;
+    const dialogs = root.querySelectorAll?.('[role="dialog"], .modal') || [];
+    for (const dialog of dialogs) {
+      if (isCardOverlay(dialog)) return dialog;
+    }
+    return null;
+  }
+
+  function isCardOverlay(el) {
+    if (!el || el.nodeType !== Node.ELEMENT_NODE) return false;
+    if (el.querySelector('.moxtags-moxfield-overlay-tags')) return false;
+    const isDialog = el.getAttribute?.('role') === 'dialog' || el.classList?.contains('modal');
+    if (!isDialog) return false;
+    if (!el.querySelector('h1 a[href*="/cards/"]')) return false;
+    return Boolean(findLegalityGrid(el));
+  }
+
+  async function injectTagsIntoCardOverlay(overlay) {
+    if (overlay.querySelector('.moxtags-moxfield-overlay-tags')) return;
+
+    const legalityGrid = findLegalityGrid(overlay);
+    if (!legalityGrid) {
+      log('Card overlay: legality grid not found');
+      return;
+    }
+
+    const identity = extractCardOverlayInfo(overlay);
+    if (!identity.name && !identity.moxCardId) {
+      log('Card overlay: could not extract card identity');
+      return;
+    }
+
+    const wrapper = document.createElement('div');
+    wrapper.className = 'moxtags-moxfield-overlay-tags';
+
+    const loader = document.createElement('p');
+    loader.className = 'moxtags-moxfield-overlay-message text-muted';
+    loader.textContent = 'Loading Scryfall tags…';
+    wrapper.appendChild(loader);
+
+    const divider = document.createElement('hr');
+    divider.className = 'my-4 moxtags-moxfield-overlay-divider';
+    legalityGrid.before(wrapper, divider);
+
+    try {
+      const tags = await loadTagsForOverlay(identity);
+      wrapper.innerHTML = '';
+      renderCardOverlayTags(wrapper, tags);
+    } catch (err) {
+      error('Card overlay tag fetch failed:', err);
+      loader.textContent = err.cacheLoading ? 'Downloading tag data…' : 'Failed to load tags';
+      loader.classList.add('moxtags-error');
+    }
+  }
+
+  async function loadTagsForOverlay(identity) {
+    let { name, set, cn, moxCardId } = identity;
+
+    if ((!set || !cn) && name) {
+      const cardInfo = cardMap.get(name.toLowerCase());
+      if (cardInfo) {
+        set = cardInfo.set;
+        cn = cardInfo.cn;
+        log('Card overlay: resolved from cardMap:', name, '→', set, cn);
+      }
+    }
+
+    if ((!set || !cn) && moxCardId) {
+      const resolved = await lookupCardByMoxfieldId(moxCardId);
+      if (resolved) {
+        set = resolved.set;
+        cn = resolved.cn;
+        log('Card overlay: resolved from Moxfield ID:', moxCardId, '→', set, cn);
+      }
+    }
+
+    if (set && cn) {
+      const cacheKey = `${set}/${cn}`;
+      const cached = tagCache.get(cacheKey);
+      if (cached) {
+        log('Card overlay: tags from cache for', cacheKey);
+        return cached;
+      }
+      log('Card overlay: loading tags for', cacheKey);
+      const tags = await loadTags(set, cn);
+      tagCache.set(cacheKey, tags);
+      return tags;
+    }
+
+    if (name) {
+      const cacheKey = `name:${name.toLowerCase()}`;
+      const cached = tagCache.get(cacheKey);
+      if (cached) {
+        log('Card overlay: tags from cache for', cacheKey);
+        return cached;
+      }
+      log('Card overlay: loading tags by name for', name);
+      const tags = await loadTagsByName(name);
+      tagCache.set(cacheKey, tags);
+      return tags;
+    }
+
+    throw new Error('No card identity available for tag lookup');
+  }
+
+  function renderCardOverlayTags(wrapper, tags) {
+    if (tags.artTags.length === 0 && tags.cardTags.length === 0) {
+      const empty = document.createElement('p');
+      if (tags.cacheLoading) {
+        empty.className = 'moxtags-moxfield-overlay-message text-muted';
+        empty.textContent = 'Downloading tag data…';
+      } else {
+        empty.className = 'moxtags-moxfield-overlay-message text-muted';
+        empty.textContent = 'No Scryfall tags found';
+      }
+      wrapper.appendChild(empty);
+      return;
+    }
+
+    const selection = buildCardOverlaySelectionController();
+
+    if (tags.cardTags.length > 0) {
+      wrapper.appendChild(buildCardOverlayTagSection('Card Tags', tags.cardTags, 'otag', selection));
+    }
+    if (tags.artTags.length > 0) {
+      wrapper.appendChild(buildCardOverlayTagSection('Art Tags', tags.artTags, 'art', selection));
+    }
+
+    wrapper.appendChild(selection.button);
+  }
+
+  function buildCardOverlaySelectionController() {
+    const selected = new Map();
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'btn btn-sm text-start text-ellipsis btn-outline btn-outline-primary moxtags-moxfield-overlay-search-btn';
+    button.textContent = 'Search by tags';
+    button.hidden = true;
+
+    function updateButton() {
+      const count = selected.size;
+      button.hidden = count === 0;
+      button.textContent = count > 0 ? `Search by tags (${count})` : 'Search by tags';
+    }
+
+    button.addEventListener('click', () => {
+      const query = [...selected.values()].join(' ');
+      if (!query) return;
+      if (addToSearchAndRun(query)) return;
+      const base = deckUrl ? `${deckUrl}/search` : '/search/cards';
+      window.location.href = `${base}?q=${encodeURIComponent(query)}`;
+    });
+
+    return {
+      button,
+      set(prefix, slug, checked) {
+        const key = `${prefix}:${slug}`;
+        if (checked) selected.set(key, key);
+        else selected.delete(key);
+        updateButton();
+      },
+    };
+  }
+
+  function buildCardOverlayTagSection(title, tags, searchPrefix, selection) {
+    const section = document.createElement('section');
+    section.className = 'moxtags-moxfield-overlay-section';
+
+    const heading = document.createElement('h3');
+    heading.className = 'moxtags-moxfield-overlay-heading';
+
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'moxtags-moxfield-overlay-toggle';
+    toggle.setAttribute('aria-expanded', 'false');
+
+    const chevron = document.createElement('span');
+    chevron.className = 'moxtags-moxfield-overlay-chevron';
+    chevron.setAttribute('aria-hidden', 'true');
+    toggle.appendChild(chevron);
+
+    const label = document.createElement('span');
+    label.textContent = `${title} (${tags.length})`;
+    toggle.appendChild(label);
+    heading.appendChild(toggle);
+    section.appendChild(heading);
+
+    const body = document.createElement('div');
+    body.className = 'moxtags-moxfield-overlay-section-body';
+    body.hidden = true;
+
+    const list = document.createElement('div');
+    list.className = 'moxtags-moxfield-overlay-tag-list';
+    for (const tag of tags) {
+      list.appendChild(buildCardOverlayTagRow(tag, searchPrefix, selection));
+    }
+    body.appendChild(list);
+    section.appendChild(body);
+
+    toggle.addEventListener('click', () => {
+      const expanded = toggle.getAttribute('aria-expanded') === 'true';
+      toggle.setAttribute('aria-expanded', expanded ? 'false' : 'true');
+      body.hidden = expanded;
+    });
+
+    return section;
+  }
+
+  function buildCardOverlayTagRow(tag, searchPrefix, selection) {
+    const row = document.createElement('div');
+    row.className = 'moxtags-moxfield-overlay-tag-row';
+
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.className = 'moxtags-moxfield-overlay-tag-cb';
+    cb.addEventListener('change', () => {
+      selection.set(searchPrefix, tag.slug, cb.checked);
+    });
+    row.appendChild(cb);
+
+    const link = document.createElement('a');
+    link.className = 'moxtags-moxfield-overlay-tag-link';
+    link.textContent = tag.name;
+    link.title = 'Search Moxfield for this tag';
+    const query = `${searchPrefix}:${tag.slug}`;
+    const base = deckUrl ? `${deckUrl}/search` : '/search/cards';
+    link.href = `${base}?q=${encodeURIComponent(query)}`;
+    link.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (addToSearchAndRun(query)) return;
+      window.location.href = link.href;
+    });
+    row.appendChild(link);
+
+    return row;
   }
 
   // ─── Change Tags dialog injection ──────────────────────────────────
