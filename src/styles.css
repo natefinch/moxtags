@@ -349,9 +349,12 @@
 }
 
 .moxtags-scryfall-tag-link {
-  background: #dddddd;
+  background: transparent;
+  border: 1px solid rgba(85, 26, 139, 0.45);
   border-radius: 0.25rem;
+  color: #551a8b;
   flex: 0 1 auto;
+  font-size: 12px;
   overflow: visible;
   padding: 0.05rem 0.35rem;
   text-overflow: clip;
@@ -360,7 +363,8 @@
 
 .moxtags-scryfall-tag-link:hover,
 .moxtags-scryfall-tag-link:focus {
-  background: #d0d0d0;
+  background: rgba(203, 170, 245, 0.25);
+  color: #551a8b;
 }
 
 .moxtags-scryfall-message {
