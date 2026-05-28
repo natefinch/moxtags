@@ -40,9 +40,27 @@ export function parseCardIdentityFromAlt(alt) {
 export function parseCardIdentityFromDeckCard(card) {
   if (!card || typeof card !== 'object') return null;
 
-  const name = String(card.displayName || card.name || '').trim();
-  const set = String(card.setCode || '').trim().toLowerCase();
-  const cn = String(card.collectorNumber || '').trim();
+  const printing = card.card && typeof card.card === 'object' ? card.card : null;
+  const oracleCard = card.oracleCard && typeof card.oracleCard === 'object'
+    ? card.oracleCard
+    : printing?.oracleCard && typeof printing.oracleCard === 'object'
+      ? printing.oracleCard
+      : null;
+  const setData = printing?.set && typeof printing.set === 'object'
+    ? printing.set
+    : printing?.edition && typeof printing.edition === 'object'
+      ? printing.edition
+      : null;
+  const name = String(
+    card.displayName
+    || card.name
+    || printing?.displayName
+    || printing?.name
+    || oracleCard?.name
+    || ''
+  ).trim();
+  const set = String(card.setCode || setData?.code || setData?.editioncode || '').trim().toLowerCase();
+  const cn = String(card.collectorNumber || printing?.collectorNumber || '').trim();
   if (!name || !set || !cn) return null;
 
   return { name, set, cn };

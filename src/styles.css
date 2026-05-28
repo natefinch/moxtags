@@ -55,6 +55,9 @@
 
 /* ── Search button (top of submenu, hidden until checkboxes checked) ── */
 .moxtags-search-btn {
+  position: sticky;
+  top: 0;
+  z-index: 1;
   display: block;
   width: calc(100% - 12px);
   margin: 4px 6px;
@@ -622,7 +625,7 @@
 }
 
 .moxtags-archidekt-search-btn {
-  background: transparent;
+  background: var(--light-background2, #dedede);
   border: 0;
   color: var(--color, #383838);
   cursor: pointer;
@@ -631,9 +634,12 @@
   font-weight: 600;
   margin: 0;
   padding: 0.5rem 0.5rem 0.5rem 15px;
+  position: sticky;
   text-align: left;
+  top: 0;
   transition: background-color 0.1s ease;
   width: 100%;
+  z-index: 1;
 }
 
 .moxtags-archidekt-search-btn:hover,
@@ -677,6 +683,11 @@
 .moxtags-archidekt-tag-link:hover,
 .moxtags-archidekt-tag-link:focus {
   text-decoration: underline;
+}
+
+.dark-mode .moxtags-archidekt-tag-link:hover,
+.dark-mode .moxtags-archidekt-tag-link:focus {
+  color: #ffffff;
 }
 
 .moxtags-archidekt-message {
@@ -772,6 +783,16 @@
   background: rgba(56, 56, 56, 0.22);
 }
 
+.dark-mode .moxtags-archidekt-details-tag-row {
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.72);
+}
+
+.dark-mode .moxtags-archidekt-details-tag-row:hover,
+.dark-mode .moxtags-archidekt-details-tag-row:focus-within {
+  background: rgba(255, 255, 255, 0.28);
+}
+
 .moxtags-archidekt-details-tag-cb {
   accent-color: var(--color, #383838);
   cursor: pointer;
@@ -790,6 +811,11 @@
 .moxtags-archidekt-details-tag-link:hover,
 .moxtags-archidekt-details-tag-link:focus {
   text-decoration: underline;
+}
+
+.dark-mode .moxtags-archidekt-details-tag-link:hover,
+.dark-mode .moxtags-archidekt-details-tag-link:focus {
+  color: #ffffff;
 }
 
 .moxtags-archidekt-details-search-btn {

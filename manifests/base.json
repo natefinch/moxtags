@@ -63,8 +63,8 @@
     },
     {
       "matches": [
-        "https://archidekt.com/decks/*",
-        "https://www.archidekt.com/decks/*"
+        "https://archidekt.com/*",
+        "https://www.archidekt.com/*"
       ],
       "js": [
         "archidekt_content.js"

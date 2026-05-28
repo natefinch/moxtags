@@ -13,6 +13,7 @@ import { bindPersistentCollapsibleSection } from './shared/collapsible-state.js'
   'use strict';
 
   const TAG = '[MoxTags Archidekt]';
+  const DEBUG_BUILD = 'archidekt-debug-2026-05-27-current-api-cards';
   const INJECTED_CLASS = 'moxtags-archidekt-injected';
   const DETAILS_TAGS_CLASS = 'moxtags-archidekt-details-tags';
   const MENU_SELECTOR = [
@@ -35,53 +36,86 @@ import { bindPersistentCollapsibleSection } from './shared/collapsible-state.js'
 
   let activeCard = null;
   let activeCardAt = 0;
+  let deckInitialized = false;
+  let activationObserver = null;
   let observer = null;
   let menuObserver = null;
   let observedMenu = null;
   let lastUrl = location.href;
   let navInterval = null;
+  let navigationHooked = false;
   let prefetchTimer = null;
   let deckIdentityMap = null;
+  let deckDataAbort = null;
+  let deckDataDeckId = null;
+  let deckDataPromise = null;
+  let lastMenuScanDebug = '';
+  let lastActivationDebug = '';
   const tagCache = new Map();
 
+  log('Content script loaded:', { debugBuild: DEBUG_BUILD, ...describePageState() });
   init();
 
   function init() {
+    log('init()', describePageState());
+    watchNavigation();
+    watchDeckActivation();
+
     if (!isDeckPage()) {
-      watchNavigation();
+      log('Not a deck page yet; waiting for SPA navigation or deck DOM activation.');
       return;
     }
 
+    startDeckPage();
+  }
+
+  function startDeckPage() {
+    if (deckInitialized) {
+      log('startDeckPage() called while already initialized; rescanning.', describePageState());
+      onMutations();
+      return;
+    }
+
+    deckInitialized = true;
     log('Initializing for Archidekt deck page:', location.href);
+    document.addEventListener('pointerdown', onPointerMenuIntent, true);
     document.addEventListener('contextmenu', onPointerMenuIntent, true);
     document.addEventListener('mousedown', onPointerMenuIntent, true);
 
     observer = new MutationObserver(onMutations);
-    observer.observe(document.body, {
+    observer.observe(document.documentElement, {
       childList: true,
       subtree: true,
       attributes: true,
       attributeFilter: ['class', 'style', 'hidden', 'aria-hidden'],
     });
+    log('Deck MutationObserver attached.');
 
+    startDeckDataLoad();
     schedulePrefetchVisibleCards();
     scanForMenu();
     scanForCardDetails();
-    watchNavigation();
   }
 
   function cleanup({ keepNavigation = false } = {}) {
+    log('cleanup()', { keepNavigation, ...describePageState() });
+    deckInitialized = false;
     if (observer) observer.disconnect();
     observer = null;
     if (menuObserver) menuObserver.disconnect();
     menuObserver = null;
     observedMenu = null;
+    document.removeEventListener('pointerdown', onPointerMenuIntent, true);
     document.removeEventListener('contextmenu', onPointerMenuIntent, true);
     document.removeEventListener('mousedown', onPointerMenuIntent, true);
     document.querySelectorAll(`.${INJECTED_CLASS}, .${DETAILS_TAGS_CLASS}`).forEach(el => el.remove());
     activeCard = null;
     activeCardAt = 0;
     deckIdentityMap = null;
+    if (deckDataAbort) deckDataAbort.abort();
+    deckDataAbort = null;
+    deckDataDeckId = null;
+    deckDataPromise = null;
     tagCache.clear();
     if (prefetchTimer) clearTimeout(prefetchTimer);
     prefetchTimer = null;
@@ -90,6 +124,11 @@ import { bindPersistentCollapsibleSection } from './shared/collapsible-state.js'
       clearInterval(navInterval);
       navInterval = null;
     }
+
+    if (!keepNavigation && activationObserver) {
+      activationObserver.disconnect();
+      activationObserver = null;
+    }
   }
 
   function isDeckPage() {
@@ -97,29 +136,122 @@ import { bindPersistentCollapsibleSection } from './shared/collapsible-state.js'
   }
 
   function watchNavigation() {
-    if (navInterval) return;
-    navInterval = setInterval(() => {
-      if (location.href === lastUrl) return;
-      lastUrl = location.href;
-      cleanup({ keepNavigation: true });
-      init();
-    }, 1000);
+    if (!navigationHooked) {
+      navigationHooked = true;
+      log('Installing SPA navigation hooks.');
+      for (const method of ['pushState', 'replaceState']) {
+        const original = history[method];
+        history[method] = function (...args) {
+          const result = original.apply(this, args);
+          log(`history.${method} called; scheduling navigation check.`, { nextUrl: String(args[2] || '') });
+          setTimeout(handleNavigationChange, 0);
+          return result;
+        };
+      }
+
+      window.addEventListener('popstate', handleNavigationChange);
+      window.addEventListener('hashchange', handleNavigationChange);
+    }
+
+    if (!navInterval) {
+      navInterval = setInterval(handleNavigationChange, 1000);
+      log('Navigation polling interval started.');
+    }
+  }
+
+  function watchDeckActivation() {
+    if (activationObserver) {
+      log('Deck activation observer already attached.');
+      return;
+    }
+
+    activationObserver = new MutationObserver(() => {
+      if (isDeckPage()) {
+        const activationKey = `${location.href}|${deckInitialized}`;
+        if (activationKey !== lastActivationDebug) {
+          lastActivationDebug = activationKey;
+          log('Deck activation observer saw deck page DOM mutation.', describePageState());
+        }
+      }
+      if (isDeckPage() && !deckInitialized) {
+        startDeckPage();
+      }
+    });
+    activationObserver.observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+    });
+    log('Deck activation observer attached.');
+  }
+
+  function handleNavigationChange() {
+    if (location.href === lastUrl) return;
+    const previousUrl = lastUrl;
+    lastUrl = location.href;
+    log('Navigation changed.', {
+      from: previousUrl,
+      to: location.href,
+      isDeckPage: isDeckPage(),
+      deckInitialized,
+    });
+    cleanup({ keepNavigation: true });
+    init();
   }
 
   function onPointerMenuIntent(event) {
     const isContextMenu = event.type === 'contextmenu';
-    const isPrimaryMouseDown = event.type === 'mousedown' && event.button === 0;
-    if (!isContextMenu && !isPrimaryMouseDown) return;
-    if (event.target instanceof Element && event.target.closest(`.${INJECTED_CLASS}`)) return;
+    const isPointerOrMouseDown = event.type === 'pointerdown' || event.type === 'mousedown';
+    const isCardMenuButtonDown = isPointerOrMouseDown && (event.button === 0 || event.button === 2);
+    if (!isContextMenu && !isCardMenuButtonDown) return;
+    if (event.target instanceof Element && event.target.closest(`.${INJECTED_CLASS}`)) {
+      log('Ignoring pointer inside injected MoxTags menu.', { event: event.type });
+      return;
+    }
+
+    log('Pointer menu intent.', {
+      event: event.type,
+      button: event.button,
+      target: describeElement(event.target),
+      activeCard: describeCard(activeCard),
+    });
 
     const card = findCardIdentityFromTarget(event.target);
     if (card) {
       activeCard = card;
       activeCardAt = Date.now();
+      log('Resolved active card from pointer target.', {
+        card: describeCard(card),
+        target: describeElement(event.target),
+      });
       return;
     }
 
-    if (isContextMenu || isPrimaryMouseDown) {
+    const unresolved = findUnresolvedCardIdentityFromTarget(event.target);
+    if (unresolved) {
+      activeCard = unresolved;
+      activeCardAt = Date.now();
+      log('Found unresolved text-view card from pointer target; waiting for deck data.', {
+        card: describeCard(unresolved),
+        target: describeElement(event.target),
+      });
+      resolveActiveCardAfterDeckData(unresolved);
+      return;
+    }
+
+    if (isContextMenu || isCardMenuButtonDown) {
+      if (event.target instanceof Element && event.target.closest('#contextMenuOverlay')) {
+        log('Pointer target was inside Archidekt menu overlay; preserving active card.', {
+          activeCard: describeCard(activeCard),
+          target: describeElement(event.target),
+        });
+        return;
+      }
+      if (activeCard) {
+        log('Pointer target was not a card; clearing active card.', {
+          previousActiveCard: describeCard(activeCard),
+          target: describeElement(event.target),
+        });
+      }
       activeCard = null;
       activeCardAt = 0;
     }
@@ -134,7 +266,17 @@ import { bindPersistentCollapsibleSection } from './shared/collapsible-state.js'
   function scanForMenu() {
     const menu = findCardMenu();
     if (!menu) {
-      if (activeCard && Date.now() - activeCardAt < 2000) return;
+      if (activeCard && Date.now() - activeCardAt < 2000) {
+        logMenuScan('Waiting for Archidekt menu after card pointer event.', {
+          activeCard: describeCard(activeCard),
+          overlayPresent: !!document.getElementById('contextMenuOverlay'),
+        });
+        return;
+      }
+      logMenuScan('No Archidekt card menu found.', {
+        overlayPresent: !!document.getElementById('contextMenuOverlay'),
+        activeCard: describeCard(activeCard),
+      });
       activeCard = null;
       activeCardAt = 0;
       if (menuObserver) menuObserver.disconnect();
@@ -144,15 +286,44 @@ import { bindPersistentCollapsibleSection } from './shared/collapsible-state.js'
     }
 
     observeMenu(menu);
-    if (!activeCard) return;
-    if (menu.querySelector(`.${INJECTED_CLASS}`)) return;
+    if (!activeCard) {
+      logMenuScan('Archidekt card menu found, but no active card is available.', {
+        menu: describeElement(menu),
+      });
+      return;
+    }
+    if (activeCard.pendingName) {
+      logMenuScan('Archidekt card menu found with unresolved active card; resolving from deck data.', {
+        menu: describeElement(menu),
+        activeCard: describeCard(activeCard),
+      });
+      resolveActiveCardAfterDeckData(activeCard);
+      return;
+    }
+    if (menu.querySelector(`.${INJECTED_CLASS}`)) {
+      logMenuScan('Archidekt card menu already has MoxTags injection.', {
+        menu: describeElement(menu),
+        activeCard: describeCard(activeCard),
+      });
+      return;
+    }
+    logMenuScan('Injecting MoxTags into Archidekt card menu.', {
+      menu: describeElement(menu),
+      activeCard: describeCard(activeCard),
+    });
     injectTagsIntoMenu(menu, activeCard);
   }
 
   function findCardMenu() {
     const overlay = document.getElementById('contextMenuOverlay');
     if (!overlay) return null;
-    return overlay.querySelector(MENU_SELECTOR);
+    const menu = overlay.querySelector(MENU_SELECTOR);
+    if (!menu) {
+      logMenuScan('contextMenuOverlay exists but no supported card menu matched.', {
+        overlayChildren: [...overlay.children].map(describeElement),
+      });
+    }
+    return menu;
   }
 
   function observeMenu(menu) {
@@ -160,9 +331,14 @@ import { bindPersistentCollapsibleSection } from './shared/collapsible-state.js'
     if (menuObserver) menuObserver.disconnect();
     observedMenu = menu;
     menuObserver = new MutationObserver(() => {
+      log('Observed Archidekt menu mutation.', {
+        menu: describeElement(menu),
+        injected: !!menu.querySelector(`.${INJECTED_CLASS}`),
+      });
       if (!menu.querySelector(`.${INJECTED_CLASS}`)) scanForMenu();
     });
     menuObserver.observe(menu, { childList: true, subtree: true });
+    log('Observing Archidekt menu.', { menu: describeElement(menu) });
   }
 
   function findCardIdentityFromTarget(target) {
@@ -171,18 +347,89 @@ import { bindPersistentCollapsibleSection } from './shared/collapsible-state.js'
 
     const directImage = start.closest?.('img[alt]');
     const directIdentity = identityFromImage(directImage);
-    if (directIdentity) return addSearchContext(directIdentity, start);
+    if (directIdentity) {
+      log('Card identity resolved from direct image alt.', {
+        card: describeCard(directIdentity),
+        image: describeElement(directImage),
+      });
+      return addSearchContext(directIdentity, start);
+    }
 
     let el = start;
     while (el && el !== document.body && el instanceof Element) {
       if (isCardContainer(el)) {
         const identity = findCardIdentityInContainer(el);
-        if (identity) return addSearchContext(identity, start);
+        if (identity) {
+          log('Card identity resolved from containing card DOM.', {
+            card: describeCard(identity),
+            container: describeElement(el),
+          });
+          return addSearchContext(identity, start);
+        }
+        log('Card-like container found, but exact card identity was not resolved.', {
+          container: describeElement(el),
+        });
       }
       el = el.parentElement;
     }
 
     return null;
+  }
+
+  function findUnresolvedCardIdentityFromTarget(target) {
+    const start = target instanceof Element ? target : target?.parentElement;
+    if (!start) return null;
+
+    let el = start;
+    while (el && el !== document.body && el instanceof Element) {
+      if (isCardContainer(el)) {
+        const name = findTextViewCardNameInContainer(el);
+        if (name) {
+          log('Found text-view card name without exact identity yet.', {
+            name,
+            container: describeElement(el),
+          });
+          return {
+            pendingName: name,
+            appendToCurrentSearch: isSearchOverlayTarget(start),
+          };
+        }
+      }
+      el = el.parentElement;
+    }
+
+    return null;
+  }
+
+  function resolveActiveCardAfterDeckData(candidate) {
+    if (!candidate?.pendingName) return;
+    log('Resolving active card after deck data load.', { candidate: describeCard(candidate) });
+    startDeckDataLoad()?.then(() => {
+      if (activeCard !== candidate) {
+        log('Skipping deck-data identity resolution because active card changed.', {
+          candidate: describeCard(candidate),
+          activeCard: describeCard(activeCard),
+        });
+        return;
+      }
+
+      const identity = findUniqueDeckIdentityByName(candidate.pendingName);
+      if (!identity) {
+        log('Deck/page data did not produce a unique identity for text-view card.', {
+          candidate: describeCard(candidate),
+          knownNameMatches: getDeckIdentitiesByName().get(candidate.pendingName.toLowerCase())?.map(describeCard) || [],
+        });
+        return;
+      }
+
+      activeCard = {
+        ...identity,
+        appendToCurrentSearch: candidate.appendToCurrentSearch,
+      };
+      activeCardAt = Date.now();
+      log('Resolved text-view active card from deck data.', { card: describeCard(activeCard) });
+      scanForMenu();
+    });
   }
 
   function addSearchContext(card, target) {
@@ -235,15 +482,17 @@ import { bindPersistentCollapsibleSection } from './shared/collapsible-state.js'
   }
 
   function identityFromTextViewCard(container) {
-    const textCard = container.matches?.('[class*="textViewCard_card"]')
-      ? container
-      : container.querySelector?.('[class*="textViewCard_card"]');
-    if (!textCard) return null;
-
-    const name = findTextViewCardName(textCard);
+    const name = findTextViewCardNameInContainer(container);
     if (!name) return null;
 
     return findUniqueDeckIdentityByName(name);
+  }
+
+  function findTextViewCardNameInContainer(container) {
+    const textCard = container.matches?.('[class*="textViewCard_card"]')
+      ? container
+      : container.querySelector?.('[class*="textViewCard_card"]');
+    return textCard ? findTextViewCardName(textCard) : '';
   }
 
   function findTextViewCardName(textCard) {
@@ -268,33 +517,152 @@ import { bindPersistentCollapsibleSection } from './shared/collapsible-state.js'
     if (deckIdentityMap) return deckIdentityMap;
 
     deckIdentityMap = new Map();
-    const script = document.getElementById('__NEXT_DATA__');
-    if (!script?.textContent) return deckIdentityMap;
-
-    try {
-      const data = JSON.parse(script.textContent);
-      const cardMap = data?.props?.pageProps?.redux?.deck?.cardMap;
-      if (!cardMap || typeof cardMap !== 'object') return deckIdentityMap;
-
-      for (const card of Object.values(cardMap)) {
-        const identity = parseCardIdentityFromDeckCard(card);
-        if (!identity) continue;
-
-        const key = identity.name.toLowerCase();
-        const existing = deckIdentityMap.get(key) || [];
-        if (!existing.some(item => cardKey(item) === cardKey(identity))) {
-          existing.push(identity);
-        }
-        deckIdentityMap.set(key, existing);
-      }
-    } catch (err) {
-      warn('Could not read Archidekt deck data:', err.message);
-    }
-
+    mergeDeckCardMap(readEmbeddedDeckCardMap());
+    mergeVisibleCardImageIdentities(deckIdentityMap);
+    log('Initialized deck identity map from embedded/page data.', {
+      names: deckIdentityMap.size,
+      identities: countDeckIdentities(deckIdentityMap),
+    });
     return deckIdentityMap;
   }
 
+  function readEmbeddedDeckCardMap() {
+    const script = document.getElementById('__NEXT_DATA__');
+    if (!script?.textContent) {
+      log('No __NEXT_DATA__ deck card map available.');
+      return null;
+    }
+
+    try {
+      const data = JSON.parse(script.textContent);
+      const cardMap = data?.props?.pageProps?.redux?.deck?.cardMap
+        || data?.props?.pageProps?.redux?.deck?.cards
+        || null;
+      log('Read embedded __NEXT_DATA__ deck card data.', {
+        entries: countCardEntries(cardMap),
+      });
+      return cardMap;
+    } catch (err) {
+      warn('Could not read Archidekt deck data:', err.message);
+      return null;
+    }
+  }
+
+  function mergeDeckCardMap(cardMap) {
+    if (!cardMap || typeof cardMap !== 'object') {
+      log('mergeDeckCardMap skipped: no card data object.');
+      return;
+    }
+    const identitiesByName = getDeckIdentitiesByName();
+    let added = 0;
+
+    for (const card of Object.values(cardMap)) {
+      const identity = parseCardIdentityFromDeckCard(card);
+      if (!identity) continue;
+
+      if (addDeckIdentity(identitiesByName, identity)) {
+        added += 1;
+      }
+    }
+    log('Merged Archidekt deck card map.', {
+      entries: countCardEntries(cardMap),
+      added,
+      names: identitiesByName.size,
+      identities: countDeckIdentities(identitiesByName),
+    });
+  }
+
+  function mergeVisibleCardImageIdentities(identitiesByName = getDeckIdentitiesByName()) {
+    let added = 0;
+    let scanned = 0;
+    for (const img of document.querySelectorAll('img[alt]')) {
+      const identity = identityFromImage(img);
+      if (!identity) continue;
+      scanned += 1;
+      if (addDeckIdentity(identitiesByName, identity)) {
+        added += 1;
+      }
+    }
+    log('Merged visible Archidekt image identities.', {
+      scanned,
+      added,
+      names: identitiesByName.size,
+      identities: countDeckIdentities(identitiesByName),
+    });
+  }
+
+  function addDeckIdentity(identitiesByName, identity) {
+    const key = identity.name.toLowerCase();
+    const existing = identitiesByName.get(key) || [];
+    if (existing.some(item => cardKey(item) === cardKey(identity))) {
+      identitiesByName.set(key, existing);
+      return false;
+    }
+
+    existing.push(identity);
+    identitiesByName.set(key, existing);
+    return true;
+  }
+
+  function startDeckDataLoad() {
+    const deckId = deckIdFromPath();
+    if (!deckId) {
+      log('Deck data load skipped: no deck id in path.', describePageState());
+      return null;
+    }
+    if (deckDataDeckId === deckId) {
+      log('Deck data load already in progress or complete for deck.', { deckId });
+      return deckDataPromise;
+    }
+
+    if (deckDataAbort) deckDataAbort.abort();
+    deckDataAbort = new AbortController();
+    deckDataDeckId = deckId;
+    log('Loading Archidekt deck data.', { deckId });
+
+    deckDataPromise = fetch(`/api/decks/${encodeURIComponent(deckId)}/`, {
+      credentials: 'same-origin',
+      signal: deckDataAbort.signal,
+    })
+      .then((response) => {
+        log('Archidekt deck data response.', { deckId, status: response.status, ok: response.ok });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.json();
+      })
+      .then((data) => {
+        const cardMap = data?.cardMap
+          || data?.deck?.cardMap
+          || data?.cards
+          || data?.deck?.cards;
+        mergeDeckCardMap(cardMap);
+        mergeVisibleCardImageIdentities();
+        log('Archidekt deck data loaded.', {
+          deckId,
+          cardMapEntries: countCardEntries(cardMap),
+        });
+        schedulePrefetchVisibleCards();
+        scanForMenu();
+        scanForCardDetails();
+      })
+      .catch((err) => {
+        if (err.name !== 'AbortError') {
+          warn('Could not load Archidekt deck data:', err.message);
+        }
+      });
+
+    return deckDataPromise;
+  }
+
+  function deckIdFromPath() {
+    const match = location.pathname.match(/^\/decks\/([^/]+)/);
+    return match ? match[1] : '';
+  }
+
   async function injectTagsIntoMenu(menu, card) {
+    log('Starting Archidekt menu tag injection.', {
+      menu: describeElement(menu),
+      card: describeCard(card),
+    });
     const wrapper = document.createElement('div');
     wrapper.className = INJECTED_CLASS;
     wrapper.dataset.moxtagsCard = cardKey(card);
@@ -308,10 +676,31 @@ import { bindPersistentCollapsibleSection } from './shared/collapsible-state.js'
 
     try {
       const tags = await loadTags(card);
-      if (!wrapper.isConnected || cardKey(activeCard) !== cardKey(card)) return;
+      if (!wrapper.isConnected || cardKey(activeCard) !== cardKey(card)) {
+        log('Skipping menu tag render because wrapper/card became stale.', {
+          wrapperConnected: wrapper.isConnected,
+          requestedCard: describeCard(card),
+          activeCard: describeCard(activeCard),
+        });
+        return;
+      }
+      log('Rendering Archidekt menu tag submenus.', {
+        card: describeCard(card),
+        artTags: tags.artTags.length,
+        cardTags: tags.cardTags.length,
+        cacheLoading: !!tags.cacheLoading,
+      });
       renderSubmenus(wrapper, tags, nativeButtonClass, card.appendToCurrentSearch);
     } catch (err) {
-      if (!wrapper.isConnected || cardKey(activeCard) !== cardKey(card)) return;
+      if (!wrapper.isConnected || cardKey(activeCard) !== cardKey(card)) {
+        log('Skipping menu error render because wrapper/card became stale.', {
+          wrapperConnected: wrapper.isConnected,
+          requestedCard: describeCard(card),
+          activeCard: describeCard(activeCard),
+          error: err.message,
+        });
+        return;
+      }
       renderError(wrapper, err);
     }
   }
@@ -330,12 +719,21 @@ import { bindPersistentCollapsibleSection } from './shared/collapsible-state.js'
     if (!legalitiesHeading) return;
 
     const identity = identityFromDetailsOverlay(overlay);
-    if (!identity) return;
+    if (!identity) {
+      log('Card details overlay found but exact identity was not resolved.', {
+        overlay: describeElement(overlay),
+      });
+      return;
+    }
 
     const key = cardKey(identity);
     const existing = extraInfo.querySelector(`:scope > .${DETAILS_TAGS_CLASS}`);
     if (existing?.dataset.moxtagsCard === key) return;
     existing?.remove();
+    log('Injecting tags into Archidekt card details.', {
+      card: describeCard(identity),
+      overlay: describeElement(overlay),
+    });
 
     const wrapper = document.createElement('div');
     wrapper.className = DETAILS_TAGS_CLASS;
@@ -941,26 +1339,39 @@ import { bindPersistentCollapsibleSection } from './shared/collapsible-state.js'
   function loadTags(card) {
     const key = cardKey(card);
     if (tagCache.has(key)) {
+      log('Using cached tags for Archidekt card.', { card: describeCard(card) });
       return Promise.resolve(tagCache.get(key));
     }
 
+    log('Requesting tags from background.', { card: describeCard(card) });
     return new Promise((resolve, reject) => {
       chrome.runtime.sendMessage(
         { type: 'fetchTags', set: card.set, number: card.cn },
         (resp) => {
           if (chrome.runtime.lastError) {
+            warn('Background tag request failed:', chrome.runtime.lastError.message, describeCard(card));
             reject(new Error(chrome.runtime.lastError.message));
             return;
           }
           if (resp?.ok) {
             const tags = normalizeTags(resp);
             tagCache.set(key, tags);
+            log('Background tag request succeeded.', {
+              card: describeCard(card),
+              artTags: tags.artTags.length,
+              cardTags: tags.cardTags.length,
+              cacheLoading: !!tags.cacheLoading,
+            });
             resolve(tags);
             return;
           }
 
           const err = new Error(resp?.error || 'Tag fetch failed');
           err.cacheLoading = resp?.cacheLoading;
+          warn('Background tag request returned error:', err.message, {
+            card: describeCard(card),
+            cacheLoading: !!err.cacheLoading,
+          });
           reject(err);
         }
       );
@@ -970,6 +1381,7 @@ import { bindPersistentCollapsibleSection } from './shared/collapsible-state.js'
   function schedulePrefetchVisibleCards() {
     if (prefetchTimer) clearTimeout(prefetchTimer);
     prefetchTimer = setTimeout(prefetchVisibleCards, 500);
+    log('Scheduled Archidekt visible-card tag prefetch.');
   }
 
   function prefetchVisibleCards() {
@@ -978,6 +1390,7 @@ import { bindPersistentCollapsibleSection } from './shared/collapsible-state.js'
     for (const img of document.querySelectorAll('img[alt]')) {
       const identity = identityFromImage(img);
       if (!identity) continue;
+      addDeckIdentity(getDeckIdentitiesByName(), identity);
       const key = cardKey(identity);
       if (tagCache.has(key)) continue;
       cardsByKey.set(key, { set: identity.set, cn: identity.cn });
@@ -991,8 +1404,12 @@ import { bindPersistentCollapsibleSection } from './shared/collapsible-state.js'
     }
 
     const cards = [...cardsByKey.values()];
-    if (cards.length === 0) return;
+    if (cards.length === 0) {
+      log('Prefetch skipped: no uncached visible/deck cards found.');
+      return;
+    }
 
+    log('Prefetching Archidekt tags.', { cards: cards.length });
     chrome.runtime.sendMessage({ type: 'prefetchDeck', cards }, (resp) => {
       if (chrome.runtime.lastError) {
         warn('Prefetch failed:', chrome.runtime.lastError.message);
@@ -1021,6 +1438,80 @@ import { bindPersistentCollapsibleSection } from './shared/collapsible-state.js'
   function cardKey(card) {
     if (!card) return '';
     return `${card.set}/${card.cn}`;
+  }
+
+  function describePageState() {
+    return {
+      href: location.href,
+      pathname: location.pathname,
+      isDeckPage: isDeckPage(),
+      deckInitialized,
+    };
+  }
+
+  function describeCard(card) {
+    if (!card) return null;
+    if (card.pendingName) {
+      return {
+        pendingName: card.pendingName,
+        appendToCurrentSearch: !!card.appendToCurrentSearch,
+      };
+    }
+    return {
+      name: card.name,
+      set: card.set,
+      cn: card.cn,
+      key: cardKey(card),
+      appendToCurrentSearch: !!card.appendToCurrentSearch,
+    };
+  }
+
+  function describeElement(value) {
+    if (!(value instanceof Element)) return String(value);
+
+    const parts = [value.tagName.toLowerCase()];
+    if (value.id) parts.push(`#${value.id}`);
+
+    const className = typeof value.className === 'string'
+      ? value.className.trim().replace(/\s+/g, '.')
+      : '';
+    if (className) parts.push(`.${className}`);
+
+    const text = normalizeText(value.textContent).slice(0, 80);
+    const alt = value.getAttribute?.('alt');
+    const title = value.getAttribute?.('title');
+    return {
+      selector: parts.join(''),
+      text,
+      alt,
+      title,
+      childCount: value.children?.length || 0,
+    };
+  }
+
+  function countDeckIdentities(identitiesByName) {
+    let count = 0;
+    for (const identities of identitiesByName.values()) {
+      count += identities.length;
+    }
+    return count;
+  }
+
+  function countCardEntries(cardMap) {
+    return cardMap && typeof cardMap === 'object' ? Object.keys(cardMap).length : 0;
+  }
+
+  function logMenuScan(message, details = {}) {
+    const debugKey = JSON.stringify({
+      message,
+      activeCard: details.activeCard || null,
+      menu: details.menu?.selector || null,
+      overlayPresent: details.overlayPresent,
+      overlayChildren: details.overlayChildren?.map(child => child.selector) || null,
+    });
+    if (debugKey === lastMenuScanDebug) return;
+    lastMenuScanDebug = debugKey;
+    log(message, details);
   }
 
   function stopPropagation(event) {

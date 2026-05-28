@@ -3,6 +3,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { parseHTML } from 'linkedom';
 
 import {
   appendArchidektTagQuery,
@@ -79,6 +80,33 @@ describe('parseCardIdentityFromDeckCard', () => {
     );
   });
 
+  it('extracts card identity from Archidekt API deck data', () => {
+    assert.deepEqual(
+      parseCardIdentityFromDeckCard({
+        oracleCard: { name: 'Counterspell' },
+        card: {
+          name: 'Counterspell',
+          set: { code: '2XM' },
+          collectorNumber: '63',
+        },
+      }),
+      { name: 'Counterspell', set: '2xm', cn: '63' }
+    );
+  });
+
+  it('extracts card identity from Archidekt current deck API cards array entries', () => {
+    assert.deepEqual(
+      parseCardIdentityFromDeckCard({
+        card: {
+          collectorNumber: 'XLN-46',
+          edition: { editioncode: 'PLST' },
+          oracleCard: { name: 'Arcane Adaptation' },
+        },
+      }),
+      { name: 'Arcane Adaptation', set: 'plst', cn: 'XLN-46' }
+    );
+  });
+
   it('returns null for incomplete deck card data', () => {
     assert.equal(parseCardIdentityFromDeckCard({ name: 'Sol Ring', setCode: 'cmm' }), null);
     assert.equal(parseCardIdentityFromDeckCard(null), null);
@@ -129,5 +157,74 @@ describe('Archidekt syntax tag queries', () => {
 
   it('uses the tag query when appending to an empty search', () => {
     assert.equal(appendArchidektTagQuery('', 'otag:draw'), 'otag:draw');
+  });
+});
+
+describe('Archidekt content script startup', () => {
+  it('starts on non-deck pages so SPA navigation can activate deck hooks later', async () => {
+    const { document } = parseHTML('<!DOCTYPE html><html><body></body></html>');
+    const observed = [];
+    const intervals = [];
+    const listeners = [];
+    const originals = {
+      document: globalThis.document,
+      window: globalThis.window,
+      history: globalThis.history,
+      location: globalThis.location,
+      MutationObserver: globalThis.MutationObserver,
+      setInterval: globalThis.setInterval,
+      clearInterval: globalThis.clearInterval,
+    };
+
+    class FakeMutationObserver {
+      observe(target, options) {
+        observed.push({ target, options });
+      }
+
+      disconnect() {}
+    }
+
+    try {
+      globalThis.document = document;
+      globalThis.window = {
+        addEventListener(type, handler) {
+          listeners.push({ type, handler });
+        },
+      };
+      globalThis.history = {
+        pushState() {},
+        replaceState() {},
+      };
+      globalThis.location = {
+        href: 'https://archidekt.com/',
+        pathname: '/',
+      };
+      globalThis.MutationObserver = FakeMutationObserver;
+      globalThis.setInterval = (handler, delay) => {
+        intervals.push({ handler, delay });
+        return intervals.length;
+      };
+      globalThis.clearInterval = () => {};
+
+      await import(`../src/archidekt_content.js?startup=${Date.now()}`);
+
+      assert.deepEqual(
+        listeners.map(listener => listener.type).sort(),
+        ['hashchange', 'popstate']
+      );
+      assert.equal(intervals.length, 1);
+      assert.equal(intervals[0].delay, 1000);
+      assert.equal(observed.length, 1);
+      assert.equal(observed[0].target, document.documentElement);
+      assert.deepEqual(observed[0].options, { childList: true, subtree: true });
+    } finally {
+      for (const [key, value] of Object.entries(originals)) {
+        if (value === undefined) {
+          delete globalThis[key];
+        } else {
+          globalThis[key] = value;
+        }
+      }
+    }
   });
 });
