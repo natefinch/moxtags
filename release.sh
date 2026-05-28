@@ -3,13 +3,19 @@ set -euo pipefail
 
 # MoxTags Release Script
 # Creates a git tag, builds the extension for Chrome and Firefox,
-# signs the Firefox extension via AMO, uploads Chrome to the Web Store,
-# packages release assets, and creates a draft GitHub release.
+# submits Firefox to AMO, signs a self-distributed Firefox XPI, uploads Chrome
+# to the Web Store, packages release assets, and creates a draft GitHub release.
 #
 # By default, increments the minor version (e.g. v1.4.2 → v1.5.0).
 # Use --patch to increment only the patch version (e.g. v1.4.2 → v1.4.3).
 # Use --skip-chrome to skip Chrome Web Store upload/publish (GitHub-only release).
+# Use --skip-firefox-listed to skip public AMO submission and only sign the local XPI.
 # Use --dryrun to preview what would happen without making any changes.
+#
+# Recovery notes:
+#   If AMO or Chrome submission succeeds but a later step fails, do not re-run
+#   the script unchanged: AMO version numbers are consumed per channel. Finish
+#   the remaining git/GitHub release steps manually, or bump to a new version.
 #
 # Required environment variables:
 #   AMO_JWT_ISSUER       — AMO API key (from https://addons.mozilla.org/developers/addon/api/key/)
@@ -22,25 +28,30 @@ set -euo pipefail
 #   ./release.sh                        # bump minor version
 #   ./release.sh --patch                # bump patch version
 #   ./release.sh --skip-chrome          # skip Chrome Web Store submission
+#   ./release.sh --skip-firefox-listed  # skip public AMO submission
 #   ./release.sh --dryrun               # preview minor bump
 #   ./release.sh --patch --dryrun       # preview patch bump
 
 # --- Constants ---
 
 CHROME_EXTENSION_ID="baekakabcmcpmhoonggddlmikdcnmkni"
+FIREFOX_ADDON_URL="${FIREFOX_ADDON_URL:-https://addons.mozilla.org/firefox/addon/moxtags/}"
+AMO_METADATA_FILE="amo-metadata.json"
 
 # --- Argument parsing ---
 
 BUMP="minor"
 DRYRUN=false
 SKIP_CHROME=false
+SKIP_FIREFOX_LISTED=false
 for arg in "$@"; do
   case "$arg" in
-    --patch)       BUMP="patch" ;;
-    --skip-chrome) SKIP_CHROME=true ;;
-    --dryrun)      DRYRUN=true ;;
+    --patch)                BUMP="patch" ;;
+    --skip-chrome)          SKIP_CHROME=true ;;
+    --skip-firefox-listed)  SKIP_FIREFOX_LISTED=true ;;
+    --dryrun)               DRYRUN=true ;;
     *)
-      echo "Usage: $0 [--patch] [--skip-chrome] [--dryrun]"
+      echo "Usage: $0 [--patch] [--skip-chrome] [--skip-firefox-listed] [--dryrun]"
       echo "  Unknown argument: $arg"
       exit 1
       ;;
@@ -58,6 +69,8 @@ else
 fi
 
 TAG="v${VERSION}"
+FIREFOX_LOCAL_VERSION="${VERSION}.1"
+FIREFOX_LOCAL_TAG="v${FIREFOX_LOCAL_VERSION}"
 
 echo "Current version: $CURRENT → releasing $TAG ($BUMP bump)"
 
@@ -65,13 +78,18 @@ if $DRYRUN; then
   echo ""
   echo "[dry run] Would create tag: $TAG"
   echo "[dry run] Would build Chrome and Firefox extensions"
-  echo "[dry run] Would sign Firefox extension via AMO (unlisted)"
+  if ! $SKIP_FIREFOX_LISTED; then
+    echo "[dry run] Would submit Firefox extension to AMO listed channel with source archive"
+  else
+    echo "[dry run] Skipping public AMO submission (--skip-firefox-listed)"
+  fi
+  echo "[dry run] Would sign Firefox self-distributed XPI via AMO unlisted channel as $FIREFOX_LOCAL_TAG"
   if ! $SKIP_CHROME; then
-    echo "[dry run] Would upload Chrome extension to Chrome Web Store"
+    echo "[dry run] Would upload and publish Chrome extension to Chrome Web Store"
   else
     echo "[dry run] Skipping Chrome Web Store upload (--skip-chrome)"
   fi
-  echo "[dry run] Would create: moxtags-chrome-${TAG}.zip, moxtags-firefox-${TAG}.xpi"
+  echo "[dry run] Would create: moxtags-chrome-${TAG}.zip, moxtags-firefox-${FIREFOX_LOCAL_TAG}.xpi"
   echo "[dry run] Would create draft GitHub release with both assets"
   echo ""
   echo "[dry run] No changes made."
@@ -121,6 +139,17 @@ if [[ ! -f manifests/base.json ]]; then
   exit 1
 fi
 
+if ! $SKIP_FIREFOX_LISTED && [[ ! -f "$AMO_METADATA_FILE" ]]; then
+  echo "Error: $AMO_METADATA_FILE is required for public AMO submission"
+  exit 1
+fi
+
+if [[ ! -d src/data ]] || ! compgen -G "src/data/*.js" > /dev/null; then
+  echo "Error: src/data tag indexes are required for release builds."
+  echo "Run: node scripts/fetch-tags.js"
+  exit 1
+fi
+
 # Check we're on the main branch
 BRANCH=$(git rev-parse --abbrev-ref HEAD)
 if [[ "$BRANCH" != "main" ]]; then
@@ -139,6 +168,67 @@ if git rev-parse "$TAG" &>/dev/null; then
   echo "Error: tag $TAG already exists."
   exit 1
 fi
+
+TMP_DIRS=()
+cleanup_tmp() {
+  for dir in "${TMP_DIRS[@]}"; do
+    rm -rf "$dir"
+  done
+}
+trap cleanup_tmp EXIT
+
+create_source_package() {
+  local source_zip="$1"
+  local tmp_dir source_dir repo_root
+  repo_root="$(pwd)"
+  tmp_dir="$(mktemp -d)"
+  TMP_DIRS+=("$tmp_dir")
+  source_dir="$tmp_dir/moxtags-source-${TAG}"
+
+  mkdir -p "$source_dir"
+  cp -R build.js package.json package-lock.json manifests src icons README.md LICENSE PRIVACY.md "$source_dir/"
+  cat > "$source_dir/AMO_BUILD.md" <<EOF
+# AMO reviewer build instructions for MoxTags ${TAG}
+
+The submitted Firefox extension is generated from this source archive with
+esbuild. The release build does not minify code.
+
+## Environment
+
+- Node.js 24.x and npm 11.x are compatible with Mozilla's default reviewer environment.
+- The checked-in package-lock.json must be used.
+
+## Build
+
+\`\`\`bash
+npm ci
+node build.js firefox
+\`\`\`
+
+The build output is written to \`dist/firefox/\`. Compare that directory with
+the submitted Firefox extension package.
+
+Do not run \`node scripts/fetch-tags.js\` for review reproduction; this source
+archive already includes the \`src/data/\` tag index files used for the release.
+EOF
+
+  echo "Packaging $source_zip for AMO source review..."
+  (cd "$tmp_dir" && COPYFILE_DISABLE=1 zip -r -X "$repo_root/$source_zip" "moxtags-source-${TAG}" -x '__MACOSX/*' '*/.*' '.*')
+  echo "  $(du -h "$source_zip" | cut -f1) $source_zip"
+}
+
+set_firefox_dist_version() {
+  local manifest_path="$1"
+  local version="$2"
+  node -e "
+    import { readFileSync, writeFileSync } from 'fs';
+    const path = process.argv[1];
+    const version = process.argv[2];
+    const json = JSON.parse(readFileSync(path, 'utf8'));
+    json.version = version;
+    writeFileSync(path, JSON.stringify(json, null, 2) + '\n');
+  " "$manifest_path" "$version"
+}
 
 # --- Update version ---
 
@@ -175,15 +265,43 @@ echo "Packaging $CHROME_ZIP..."
 (cd dist/chrome && COPYFILE_DISABLE=1 zip -r -X "../../$CHROME_ZIP" . -x '__MACOSX/*' '*/.*' '.*')
 echo "  $(du -h "$CHROME_ZIP" | cut -f1) $CHROME_ZIP"
 
-# --- Sign Firefox extension via AMO ---
+# --- Submit Firefox extension to AMO and sign local XPI ---
 
-FIREFOX_XPI="moxtags-firefox-${TAG}.xpi"
+FIREFOX_XPI="moxtags-firefox-${FIREFOX_LOCAL_TAG}.xpi"
+SOURCE_ZIP="moxtags-source-${TAG}.zip"
 
-echo "Signing Firefox extension via AMO (unlisted)..."
+if ! $SKIP_FIREFOX_LISTED; then
+  create_source_package "$SOURCE_ZIP"
+
+  echo "Submitting Firefox extension to AMO listed channel..."
+  rm -rf web-ext-artifacts-listed
+  npx web-ext sign \
+    --source-dir=dist/firefox/ \
+    --artifacts-dir=web-ext-artifacts-listed/ \
+    --channel=listed \
+    --amo-metadata="$AMO_METADATA_FILE" \
+    --upload-source-code="$SOURCE_ZIP" \
+    --approval-timeout=0 \
+    --no-input \
+    --api-key="$AMO_JWT_ISSUER" \
+    --api-secret="$AMO_JWT_SECRET"
+  rm -rf web-ext-artifacts-listed
+else
+  echo "Skipping public AMO submission (--skip-firefox-listed)"
+fi
+
+FIREFOX_LOCAL_TMP="$(mktemp -d)"
+TMP_DIRS+=("$FIREFOX_LOCAL_TMP")
+cp -R dist/firefox "$FIREFOX_LOCAL_TMP/firefox"
+set_firefox_dist_version "$FIREFOX_LOCAL_TMP/firefox/manifest.json" "$FIREFOX_LOCAL_VERSION"
+
+echo "Signing Firefox self-distributed XPI via AMO (unlisted, version $FIREFOX_LOCAL_VERSION)..."
+rm -rf web-ext-artifacts
 npx web-ext sign \
-  --source-dir=dist/firefox/ \
+  --source-dir="$FIREFOX_LOCAL_TMP/firefox/" \
   --artifacts-dir=web-ext-artifacts/ \
   --channel=unlisted \
+  --no-input \
   --api-key="$AMO_JWT_ISSUER" \
   --api-secret="$AMO_JWT_SECRET"
 
@@ -239,9 +357,9 @@ gh release create "$TAG" "$CHROME_ZIP" "$FIREFOX_XPI" \
   --notes "## Installation
 
 ### Chrome
-Install from the [Chrome Web Store](https://chromewebstore.google.com/detail/moxtags/${CHROME_EXTENSION_ID}).
+Install from the [Chrome Web Store](https://chromewebstore.google.com/detail/moxtags/${CHROME_EXTENSION_ID}) once the store review is complete.
 
-Or for manual install:
+Manual install is also available if the Web Store review is delayed:
 1. Download **${CHROME_ZIP}** below
 2. Unzip it to a folder
 3. Open Chrome → \`chrome://extensions\`
@@ -249,15 +367,23 @@ Or for manual install:
 5. Click **Load unpacked** and select the unzipped folder
 
 ### Firefox
+Install from [Firefox Add-ons](${FIREFOX_ADDON_URL}) once AMO review is complete.
+
+Manual install is also available with the signed self-distributed XPI:
 1. Download **${FIREFOX_XPI}** below
 2. Open Firefox → \`about:addons\`
 3. Click the gear icon (⚙) → **Install Add-on From File…**
-4. Select the downloaded \`.xpi\` file" \
+4. Select the downloaded \`.xpi\` file
+
+Note: the downloadable Firefox XPI uses AMO's unlisted signing channel and has internal version ${FIREFOX_LOCAL_VERSION}; AMO requires distinct version numbers between listed and unlisted channels." \
   --draft
 
 # --- Cleanup ---
 
 rm "$CHROME_ZIP" "$FIREFOX_XPI"
+if [[ -f "$SOURCE_ZIP" ]]; then
+  rm "$SOURCE_ZIP"
+fi
 
 echo ""
 echo "Done! Draft release $TAG created at:"

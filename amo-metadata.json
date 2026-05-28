@@ -1,0 +1,26 @@
+{
+  "summary": {
+    "en-US": "Adds Scryfall Tagger card and art tag menus, tag panels, search helpers, and autocomplete to Moxfield, Scryfall, and Archidekt."
+  },
+  "description": {
+    "en-US": "MoxTags adds Scryfall Tagger card tags and art tags directly to Moxfield, Scryfall, and Archidekt.\n\nOn Moxfield deck pages, MoxTags adds Art Tags and Card Tags submenus to card right-click menus and Options dropdowns. Each submenu lists the Scryfall Tagger labels for that card, with links and multi-select controls for searching matching tags. It also adds Scryfall tag autocomplete to Moxfield deck search and can add Scryfall Tagger labels as Moxfield tags.\n\nOn Moxfield search result pages, MoxTags adds tag buttons and dropdowns to card result rows and Options menus so you can inspect the exact printing's art tags and the card's oracle tags from the search interface.\n\nOn Scryfall card pages and full search results, MoxTags adds collapsed Card Tags and Art Tags sections under each card's artist credit. Clicking a tag appends the matching otag: or art: query token to Scryfall's search box.\n\nOn Archidekt deck pages, MoxTags adds Art Tags and Card Tags submenus to right-click and three-dot card menus in image, stack, and text views. Tag links and multi-select searches open Archidekt's Card Search overlay, switch to Syntax Search, and search for the selected otag: or art: tags. MoxTags also adds collapsed tag sections to Archidekt's card details overlay for the exact printing."
+  },
+  "categories": {
+    "firefox": [
+      "games-entertainment"
+    ]
+  },
+  "homepage": {
+    "en-US": "https://github.com/natefinch/moxtags"
+  },
+  "support_url": {
+    "en-US": "https://github.com/natefinch/moxtags/issues"
+  },
+  "privacy_policy": {
+    "en-US": "MoxTags does not collect, store, transmit, or use your personal information. No data is gathered, retained, or shared with third parties."
+  },
+  "version": {
+    "license": "MIT",
+    "approval_notes": "MoxTags is built with esbuild. The attached source archive includes build instructions in AMO_BUILD.md."
+  }
+}
