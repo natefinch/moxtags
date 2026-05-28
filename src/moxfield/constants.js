@@ -9,7 +9,8 @@ export const BOARD_NAMES = [
 
 // Menu detection keywords (text labels found in Moxfield card context menus).
 export const MENU_KEYWORDS = [
+  'Add to Another Deck', 'Add to Collection', 'Add to Wish List',
   'Switch Printing', 'Change Tags', 'View Details',
   'Copy Card Name', 'Change Mana Cost', 'Set as Deck Image',
-  'Add One', 'Remove',
+  'Add One', 'Remove', 'Buy on Mana Pool',
 ];

@@ -62,7 +62,8 @@ export function scanForCardName(root, cardMap) {
  * @returns {boolean}
  */
 export function isCardMenu(el, menuKeywords, minHits = 3) {
-  if (!el || el === document.body || el === document.documentElement) return false;
+  const doc = el?.ownerDocument;
+  if (!el || el === doc?.body || el === doc?.documentElement) return false;
   if (el.closest?.('.moxtags-injected') || el.closest?.('.moxtags-submenu')) return false;
   const text = el.textContent || '';
   if (text.length < 20 || text.length > 8000) return false;
@@ -88,6 +89,44 @@ export function findSmallestMenu(root, menuKeywords) {
     if (deeper) return deeper;
   }
   return root;
+}
+
+/**
+ * Find public-deck card action panels shown in Moxfield's left card preview.
+ *
+ * Public decks do not show the editable two-column context menu. Instead,
+ * selecting/right-clicking a card updates the persistent preview panel with
+ * "Add to Wish List" and buy buttons.
+ *
+ * @param {Element} root - The root element to search.
+ * @returns {Element[]} Action containers that can accept injected controls.
+ */
+export function findCardPreviewActionPanels(root) {
+  if (!root?.querySelectorAll && !root?.matches) return [];
+
+  const containers = [];
+  if (root.matches?.('.deckview-image-container')) {
+    containers.push(root);
+  }
+  const closest = root.closest?.('.deckview-image-container');
+  if (closest && !containers.includes(closest)) {
+    containers.push(closest);
+  }
+  if (root.querySelectorAll) {
+    for (const container of root.querySelectorAll('.deckview-image-container')) {
+      if (!containers.includes(container)) containers.push(container);
+    }
+  }
+
+  const panels = [];
+  for (const container of containers) {
+    for (const panel of container.querySelectorAll('.d-grid')) {
+      if (findAnchorItem(panel, 'Add to Wish List')) {
+        panels.push(panel);
+      }
+    }
+  }
+  return panels;
 }
 
 /**
@@ -123,6 +162,26 @@ export function extractCardIdFromMenu(menu) {
   for (const link of links) {
     const id = parseCardIdFromHref(link.getAttribute('href'));
     if (id) return id;
+  }
+  return null;
+}
+
+/**
+ * Extract the selected Moxfield card ID from a public-deck preview panel.
+ *
+ * @param {Element} panel - The preview action panel or ancestor.
+ * @returns {string|null} The Moxfield card ID, or null.
+ */
+export function extractCardIdFromCardPreviewPanel(panel) {
+  const linkId = extractCardIdFromMenu(panel);
+  if (linkId) return linkId;
+
+  const root = panel.closest?.('.deckview-image-container') || panel;
+  const images = root.querySelectorAll?.('img[src*="/cards/card-"], img[src*="cards/card-"]') || [];
+  for (const img of images) {
+    const src = img.getAttribute('src') || '';
+    const match = src.match(/\/cards\/card-([A-Za-z0-9_-]+?)(?:-|\.|$)/);
+    if (match) return match[1];
   }
   return null;
 }

@@ -12,6 +12,17 @@
   align-items: center;
 }
 
+.moxtags-preview-injected {
+  display: grid !important;
+  gap: 0.5rem !important;
+  width: 100%;
+}
+
+.moxtags-preview-injected .moxtags-trigger {
+  justify-content: flex-start;
+  width: 100%;
+}
+
 .moxtags-trigger-label {
   flex: 1;
 }

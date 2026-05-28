@@ -11,6 +11,8 @@ import {
   scanForCardName as _scanForCardName, isCardMenu as _isCardMenu,
   findSmallestMenu as _findSmallestMenu, findAnchorItem as _findAnchorItem,
   extractCardIdFromMenu as _extractCardIdFromMenu,
+  extractCardIdFromCardPreviewPanel as _extractCardIdFromCardPreviewPanel,
+  findCardPreviewActionPanels as _findCardPreviewActionPanels,
   addToSearchAndRun as _addToSearchAndRun,
 } from './moxfield/dom.js';
 import {
@@ -21,6 +23,7 @@ import { lookupCardByMoxfieldId as _lookupCardByMoxfieldId } from './moxfield/ap
 import { filterAndSortTags, parseInput, renderCount, highlightTag } from './shared/autocomplete.js';
 import { ORACLE_PREFIXES, MAX_VISIBLE } from './shared/constants.js';
 import { bindPersistentCollapsibleSection } from './shared/collapsible-state.js';
+import { buildScryfallSearchUrl } from './shared/scryfall-page.js';
 import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
 
 (function () {
@@ -35,6 +38,7 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
   let cardMap = new Map();   // lowercase card name → { name, set, cn }
   let tagCache = new Map();  // "set/cn" → { artTags: [], cardTags: [] }
   let currentCard = null;    // info object of most-recently-clicked card
+  let searchTagsOnScryfall = false;
   let observer = null;
   let lastUrl = location.href;
 
@@ -91,7 +95,7 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
       childList: true,
       subtree: true,
       attributes: true,
-      attributeFilter: ['class', 'style', 'aria-hidden', 'hidden'],
+      attributeFilter: ['class', 'style', 'aria-hidden', 'hidden', 'href', 'src'],
     });
 
     // Re-init when the SPA navigates to a different deck.
@@ -108,6 +112,8 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
     cardMap.clear();
     tagCache.clear();
     currentCard = null;
+    lastOptionsCard = null;
+    searchTagsOnScryfall = false;
     detachAutocomplete();
 
     // Remove stale page_hook data from a previous deck so the next
@@ -162,6 +168,7 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
           mergeMoxIds(result.moxIds);
           log('fetchDeckData: Strategy 1 SUCCESS');
           prefetchAllTags();
+          scanForCardPreviewPanel(document.body);
           return;
         }
         log('fetchDeckData: buildCardMap returned null for', url);
@@ -186,6 +193,7 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
       mergeMoxIds(result.moxIds);
       log('fetchDeckData: Strategy 2 SUCCESS');
       prefetchAllTags();
+      scanForCardPreviewPanel(document.body);
       return;
     }
 
@@ -229,12 +237,21 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
     if (name) {
       const info = cardMap.get(name.toLowerCase());
       if (info) {
-        currentCard = info;
+        const cardContainer = e.target.closest?.('[data-hash]');
+        const cardLink = cardContainer?.querySelector?.('a[href*="/cards/"]') || e.target.closest?.('a[href*="/cards/"]');
+        const moxCardId = cardContainer?.dataset?.hash || parseCardIdFromHref(cardLink?.getAttribute('href'));
+        currentCard = moxCardId ? { ...info, moxCardId } : info;
+        lastOptionsCard = null;
         log('Card context set →', info.name, `(${info.set}/${info.cn})`);
       } else {
         log('Card name found but not in cardMap:', name);
       }
     }
+    pollForCardPreviewPanel();
+  }
+
+  function pollForCardPreviewPanel() {
+    scanForCardPreviewPanel(document.body);
   }
 
   function identifyCard(el) {
@@ -251,6 +268,7 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
       for (const node of mut.addedNodes) {
         if (node.nodeType !== Node.ELEMENT_NODE) continue;
         scanForMenu(node);
+        scanForCardPreviewPanel(node);
         scanForDialog(node);
         scanForCardOverlay(node);
         scanForCardDropdown(node);
@@ -259,6 +277,7 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
       // Also check attribute changes – menus may be shown/hidden via style.
       if (mut.type === 'attributes' && mut.target?.nodeType === Node.ELEMENT_NODE) {
         scanForMenu(mut.target);
+        scanForCardPreviewPanel(mut.target);
         scanForDialog(mut.target);
         scanForCardOverlay(mut.target);
         scanForCardDropdown(mut.target);
@@ -273,6 +292,7 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
     const candidates = [el, ...el.querySelectorAll('*')];
     for (const c of candidates) {
       if (isCardMenu(c)) {
+        if (isPublicDeckActionMenu(c)) markSearchTagsOnScryfall('public deck menu');
         log('Menu detected via MutationObserver, card:', currentCard?.name);
         injectTagsIntoMenu(c);
         return;
@@ -282,6 +302,7 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
     let parent = el.parentElement;
     for (let i = 0; i < 10 && parent && parent !== document.body; i++) {
       if (isCardMenu(parent)) {
+        if (isPublicDeckActionMenu(parent)) markSearchTagsOnScryfall('public deck menu');
         log('Menu detected via parent walk');
         injectTagsIntoMenu(parent);
         return;
@@ -294,6 +315,14 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
     return _isCardMenu(el, MENU_KEYWORDS);
   }
 
+  function isPublicDeckActionMenu(el) {
+    const text = el?.textContent || '';
+    return text.includes('Add to Another Deck')
+      && text.includes('Add to Collection')
+      && text.includes('Add to Wish List')
+      && !text.includes('Change Tags');
+  }
+
   // ─── Search result card dropdown detection ─────────────────────────
   // On deck search pages, each card has a small "Options" dropdown.
   // It doesn't match the full context-menu heuristic, and Moxfield
@@ -301,7 +330,11 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
   // Detect it by looking for .dropdown-menu elements with card-specific
   // menu text like "Add to Main Deck".
 
-  const CARD_DROPDOWN_MARKERS = ['Add to Main Deck', 'Add to Sideboard'];
+  const CARD_DROPDOWN_MARKERS = [
+    'Add to Main Deck', 'Add to Sideboard',
+    'Add to Another Deck', 'Add to Collection', 'Add to Wish List',
+    'View Details', 'Copy Card Name', 'Buy on Mana Pool',
+  ];
 
   // Track which card's Options was most recently clicked, since Moxfield
   // portals the dropdown to <body> (losing the card context).
@@ -310,15 +343,15 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
   document.addEventListener('mousedown', (e) => {
     const toggle = e.target.closest?.('.dropdown-toggle');
     if (!toggle) return;
-    // Clear currentCard — the general onMouseDown handler may have matched
-    // a different card visible on the page (e.g. a deck card on the search
-    // results page) instead of the one whose Options button was clicked.
-    currentCard = null;
     const card = toggle.closest('.decklist-card');
     if (!card) {
       log('Options toggle clicked but no .decklist-card parent found');
       return;
     }
+    // Clear currentCard — the general onMouseDown handler may have matched
+    // a different card visible on the page (e.g. a deck card on the search
+    // results page) instead of the one whose Options button was clicked.
+    currentCard = null;
     const nameEl = card.querySelector('.decklist-card-phantomsearch');
     const name = nameEl?.textContent?.trim();
     if (!name) {
@@ -379,10 +412,14 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
       // Case B: body-level portal with card-action menu items.
       const text = menu.textContent || '';
       if (!CARD_DROPDOWN_MARKERS.some(m => text.includes(m))) continue;
+      const isSearchResultDropdown = text.includes('Add to Main Deck') || text.includes('Add to Sideboard');
+      if (isPublicDeckActionMenu(menu)) markSearchTagsOnScryfall('public deck dropdown');
 
-      // Identify the card from the tracked Options click (preferred) or
-      // the general mousedown context.
-      const cardInfo = lastOptionsCard || currentCard;
+      // Search-result Options menus should prefer the tracked Options click;
+      // public deck action menus should prefer the general card click context.
+      const cardInfo = isSearchResultDropdown
+        ? (lastOptionsCard || currentCard)
+        : (currentCard || lastOptionsCard);
       if (!cardInfo) {
         log('Card dropdown found but could not identify card');
         continue;
@@ -405,7 +442,10 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
   }, true);
 
   function pollForMenu() {
-    if (!currentCard && !lastOptionsCard) return;
+    if (!currentCard && !lastOptionsCard) {
+      pollForCardPreviewPanel();
+      return;
+    }
     // Search for a card menu. Start from portals / overlays
     // which are typically direct children of body or within a high-level wrapper.
     const roots = document.querySelectorAll(
@@ -416,6 +456,7 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
     );
     for (const el of roots) {
       if (isCardMenu(el)) {
+        if (isPublicDeckActionMenu(el)) markSearchTagsOnScryfall('public deck menu');
         log('Menu detected via polling (targeted selectors)');
         injectTagsIntoMenu(el);
         return;
@@ -425,15 +466,77 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
     for (const el of document.body.children) {
       const found = findSmallestMenu(el);
       if (found) {
+        if (isPublicDeckActionMenu(found)) markSearchTagsOnScryfall('public deck menu');
         log('Menu detected via polling (body child walk)');
         injectTagsIntoMenu(found);
         return;
       }
     }
+    pollForCardPreviewPanel();
   }
 
   function findSmallestMenu(root) {
     return _findSmallestMenu(root, MENU_KEYWORDS);
+  }
+
+  // ─── Public deck preview action panel detection ─────────────────────
+  // Public decks don't show the editable two-column context menu. The
+  // selected/right-clicked card instead updates the persistent card preview
+  // action panel with "Add to Wish List" and buy buttons.
+
+  function scanForCardPreviewPanel(el) {
+    const panels = _findCardPreviewActionPanels(el);
+    for (const panel of panels) {
+      injectTagsIntoCardPreviewPanel(panel);
+    }
+  }
+
+  function injectTagsIntoCardPreviewPanel(panel) {
+    markSearchTagsOnScryfall('public deck preview panel');
+
+    const cardInfo = resolveCardPreviewPanelCard(panel);
+    if (!cardInfo) {
+      log('Public deck card preview panel found but could not identify card');
+      return;
+    }
+
+    const cardKey = getCardContextKey(cardInfo);
+    const existing = panel.querySelector('.moxtags-injected');
+    if (cardKey && existing?.dataset.moxtagsCardKey === cardKey) return;
+
+    currentCard = cardInfo;
+    log('Public deck card preview panel detected:', currentCard.name || currentCard.moxCardId);
+    injectTagsIntoMenu(panel, { cardKey, previewPanel: true, persistent: true });
+  }
+
+  function resolveCardPreviewPanelCard(panel) {
+    const moxCardId = _extractCardIdFromCardPreviewPanel(panel);
+    if (moxCardId) {
+      const cached = moxIdCache.get(moxCardId);
+      if (cached) {
+        return {
+          name: currentCard?.name || '',
+          set: cached.set,
+          cn: cached.cn,
+          moxCardId,
+        };
+      }
+      return {
+        name: currentCard?.name || '',
+        set: currentCard?.set || null,
+        cn: currentCard?.cn || null,
+        moxCardId,
+      };
+    }
+    return currentCard;
+  }
+
+  function getCardContextKey(cardInfo) {
+    if (!cardInfo) return '';
+    if (cardInfo.set && cardInfo.cn) return `${cardInfo.set}/${cardInfo.cn}`;
+    if (cardInfo.moxCardId) return `mox:${cardInfo.moxCardId}`;
+    if (cardInfo.name) return `name:${cardInfo.name.toLowerCase()}`;
+    return '';
   }
 
   // ─── Long layout detection & injection ──────────────────────────────
@@ -605,7 +708,7 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
   function renderLongMenuTags(menu, tags, searchPrefix) {
     const searchBtn = document.createElement('button');
     searchBtn.className = 'moxtags-search-btn';
-    searchBtn.textContent = 'Add to Search';
+    searchBtn.textContent = searchActionLabel();
     searchBtn.style.display = 'none';
     menu.appendChild(searchBtn);
 
@@ -613,7 +716,7 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
 
     function updateSearchBtn() {
       if (checked.size > 0) {
-        searchBtn.textContent = `Add to Search (${checked.size})`;
+        searchBtn.textContent = searchButtonText(checked.size);
         searchBtn.style.display = '';
       } else {
         searchBtn.style.display = 'none';
@@ -624,12 +727,8 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
       e.stopPropagation();
       const parts = [...checked].map(slug => `${searchPrefix}:${slug}`);
       const q = parts.join(' ');
-      if (addToSearchAndRun(q)) {
-        menu.classList.remove('show');
-        return;
-      }
-      const base = deckUrl ? `${deckUrl}/search` : '/search/cards';
-      window.location.href = `${base}?q=${encodeURIComponent(q)}`;
+      runTagSearch(q);
+      menu.classList.remove('show');
     });
 
     for (const tag of tags) {
@@ -650,20 +749,14 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
       const a = document.createElement('a');
       a.className = 'dropdown-item moxtags-tag-item';
       a.textContent = tag.name;
-      a.title = 'Add to search';
-      const tagUrl = deckUrl
-        ? `${deckUrl}/search?q=${encodeURIComponent(searchPrefix + ':' + tag.slug)}`
-        : `/search/cards?q=${encodeURIComponent(searchPrefix + ':' + tag.slug)}`;
-      a.href = tagUrl;
+      a.title = tagSearchTitle();
+      a.href = buildTagSearchUrl(searchPrefix + ':' + tag.slug);
       a.addEventListener('click', (e) => {
         e.stopPropagation();
+        e.preventDefault();
         const query = `${searchPrefix}:${tag.slug}`;
-        if (addToSearchAndRun(query)) {
-          e.preventDefault();
-          menu.classList.remove('show');
-          return;
-        }
-        window.location.href = a.href;
+        runTagSearch(query);
+        menu.classList.remove('show');
       });
       row.appendChild(a);
 
@@ -672,22 +765,36 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
   }
 
   // ─── Tag injection ─────────────────────────────────────────────────
-  async function injectTagsIntoMenu(menu) {
+  async function injectTagsIntoMenu(menu, options = {}) {
+    const useGlobalDebounce = !options.previewPanel;
+    const insertionContainer = options.previewPanel
+      ? menu
+      : (menu.matches?.('.dropdown-menu')
+        ? (menu.querySelector(':scope > .dropdown-menu-parent') || menu)
+        : menu);
+
     // Debounce: multiple detection paths may fire simultaneously.
-    if (injecting) {
+    if (useGlobalDebounce && injecting) {
       log('injectTagsIntoMenu: skipping, already injecting');
       return;
     }
-    injecting = true;
-
-    // Remove any previous injection in this menu.
-    menu.querySelectorAll('.moxtags-injected').forEach(el => el.remove());
+    if (useGlobalDebounce) injecting = true;
 
     if (!currentCard) {
       warn('No card context when menu opened');
-      injecting = false;
+      if (useGlobalDebounce) injecting = false;
       return;
     }
+
+    const cardKey = options.cardKey || getCardContextKey(currentCard);
+    const existingInjection = insertionContainer.querySelector('.moxtags-injected');
+    if (cardKey && existingInjection?.dataset.moxtagsCardKey === cardKey) {
+      if (useGlobalDebounce) injecting = false;
+      return;
+    }
+
+    // Remove any previous injection in this menu.
+    insertionContainer.querySelectorAll('.moxtags-injected').forEach(el => el.remove());
 
     let { name, set, cn } = currentCard;
     log('injectTagsIntoMenu: card =', name, 'set =', set, 'cn =', cn);
@@ -696,7 +803,7 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
     // First check the dropdown menu for a "View Details" link, then fall
     // back to the moxCardId captured when the Options button was clicked.
     if (!set || !cn) {
-      let moxCardId = extractCardIdFromMenu(menu);
+      let moxCardId = extractCardIdFromMenu(insertionContainer);
       if (!moxCardId && currentCard.moxCardId) {
         moxCardId = currentCard.moxCardId;
         log('injectTagsIntoMenu: using moxCardId from Options click:', moxCardId);
@@ -707,7 +814,7 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
         if (resolved) {
           set = resolved.set;
           cn = resolved.cn;
-          currentCard = { name, set, cn };
+          currentCard = { ...currentCard, name, set, cn };
           log('injectTagsIntoMenu: resolved to', set, cn);
         } else {
           log('injectTagsIntoMenu: Moxfield ID resolution failed for', moxCardId);
@@ -716,25 +823,23 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
     }
 
     // Determine where to insert our tags.
-    // Two-column deck context menu: insert into the left column after "Add to Wish List".
-    // Single-column Options dropdown: insert after "Buy on Mana Pool" at the bottom.
-    const leftCol = menu.querySelector('.d-flex.flex-nowrap > .d-inline-block:first-child');
-    const wishListAnchor = leftCol && findAnchorItem(leftCol, 'Add to Wish List');
+    // Two-column deck context menu and preview panels: insert after "Add to Wish List".
+    // Single-column dropdowns: insert at the end, regardless of the final item.
+    const leftCol = insertionContainer.querySelector('.d-flex.flex-nowrap > .d-inline-block:first-child');
+    const wishListAnchor = (leftCol && findAnchorItem(leftCol, 'Add to Wish List'))
+      || (options.previewPanel ? findAnchorItem(insertionContainer, 'Add to Wish List') : null);
 
     let insertionPoint;
-    let insertionParent;
     if (wishListAnchor) {
       insertionPoint = wishListAnchor;
-      insertionParent = leftCol;
     } else {
-      const anchor = findAnchorItem(menu, 'Buy on Mana Pool');
-      insertionPoint = anchor || menu.lastElementChild;
-      insertionParent = menu;
+      insertionPoint = insertionContainer.lastElementChild;
     }
 
     // Create a wrapper for all our injected elements.
     const wrapper = document.createElement('div');
-    wrapper.className = 'moxtags-injected';
+    wrapper.className = options.previewPanel ? 'moxtags-injected moxtags-preview-injected d-grid gap-2' : 'moxtags-injected';
+    if (cardKey) wrapper.dataset.moxtagsCardKey = cardKey;
 
     // Divider
     const divider = document.createElement('div');
@@ -748,17 +853,25 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
     wrapper.appendChild(loader);
 
     // Insert after the anchor.
-    insertionPoint.after(wrapper);
+    if (insertionPoint) {
+      insertionPoint.after(wrapper);
+    } else {
+      insertionContainer.appendChild(wrapper);
+    }
+    if (options.previewPanel) {
+      log('injectTagsIntoMenu: preview wrapper inserted, connected =', wrapper.isConnected);
+    }
 
     // Reset state when menu disappears so the next click picks up a fresh card.
-    const cleanupObs = new MutationObserver(() => {
-      if (!document.body.contains(menu)) {
-        cleanupObs.disconnect();
-        injecting = false;
-        currentCard = null;
-      }
-    });
-    cleanupObs.observe(document.body, { childList: true, subtree: true });
+    if (!options.persistent) {
+      const cleanupObs = new MutationObserver(() => {
+        if (!document.body.contains(menu)) {
+          cleanupObs.disconnect();
+          currentCard = null;
+        }
+      });
+      cleanupObs.observe(document.body, { childList: true, subtree: true });
+    }
 
     try {
       let tags;
@@ -772,7 +885,7 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
           tags = await loadTags(set, cn);
           tagCache.set(cacheKey, tags);
         }
-      } else {
+      } else if (name) {
         // Card not in deck and Moxfield ID resolution failed — fall back to name.
         const cacheKey = `name:${name.toLowerCase()}`;
         tags = tagCache.get(cacheKey);
@@ -783,10 +896,31 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
           tags = await loadTagsByName(name);
           tagCache.set(cacheKey, tags);
         }
+      } else {
+        warn('No exact card identity or card name available for tag lookup');
+        loader.textContent = 'Could not identify card';
+        loader.classList.add('moxtags-error');
+        return;
       }
 
       loader.remove();
-      renderSubmenus(wrapper, tags);
+      if (options.previewPanel && !wrapper.isConnected) {
+        if (!menu.isConnected) {
+          log('injectTagsIntoMenu: preview panel was replaced before tags rendered');
+          return;
+        }
+        const anchor = findAnchorItem(insertionContainer, 'Add to Wish List') || findAnchorItem(insertionContainer, 'Buy @ Mana Pool');
+        if (anchor) {
+          anchor.after(wrapper);
+        } else {
+          insertionContainer.appendChild(wrapper);
+        }
+        log('injectTagsIntoMenu: preview wrapper reinserted before render');
+      }
+      renderSubmenus(wrapper, tags, { previewPanel: options.previewPanel });
+      if (options.previewPanel) {
+        log('injectTagsIntoMenu: preview rendered art =', tags.artTags.length, 'card =', tags.cardTags.length, 'connected =', wrapper.isConnected);
+      }
     } catch (err) {
       error('Tag fetch failed:', err);
       if (err.cacheLoading) {
@@ -796,6 +930,8 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
         loader.textContent = 'Failed to load tags';
         loader.classList.add('moxtags-error');
       }
+    } finally {
+      if (useGlobalDebounce) injecting = false;
     }
   }
 
@@ -874,6 +1010,43 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
 
   // ─── Search helpers ─────────────────────────────────────────────────
 
+  function markSearchTagsOnScryfall(reason) {
+    if (searchTagsOnScryfall) return;
+    searchTagsOnScryfall = true;
+    log('Tag search target set to Scryfall:', reason);
+  }
+
+  function searchActionLabel() {
+    return searchTagsOnScryfall ? 'Search Scryfall' : 'Add to Search';
+  }
+
+  function searchButtonText(count) {
+    const label = searchActionLabel();
+    return count > 0 ? `${label} (${count})` : label;
+  }
+
+  function tagSearchTitle() {
+    return searchTagsOnScryfall ? 'Search Scryfall for this tag' : 'Add to search';
+  }
+
+  function buildTagSearchUrl(query) {
+    if (searchTagsOnScryfall) {
+      return buildScryfallSearchUrl(query);
+    }
+    const base = deckUrl ? `${deckUrl}/search` : '/search/cards';
+    return `${base}?q=${encodeURIComponent(query)}`;
+  }
+
+  function runTagSearch(query) {
+    if (searchTagsOnScryfall) {
+      window.location.href = buildScryfallSearchUrl(query);
+      return true;
+    }
+    if (addToSearchAndRun(query)) return true;
+    window.location.href = buildTagSearchUrl(query);
+    return true;
+  }
+
   function addToSearchAndRun(query) {
     const ok = _addToSearchAndRun(query);
     if (!ok) warn('Search input not found, falling back to navigation');
@@ -881,7 +1054,7 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
   }
 
   // ─── Rendering ─────────────────────────────────────────────────────
-  function renderSubmenus(wrapper, tags) {
+  function renderSubmenus(wrapper, tags, options = {}) {
     if (tags.artTags.length === 0 && tags.cardTags.length === 0) {
       const empty = document.createElement('div');
       if (tags.cacheLoading) {
@@ -895,17 +1068,21 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
       return;
     }
 
+    const triggerClassName = options.previewPanel
+      ? 'btn btn-sm text-start text-ellipsis btn-outline btn-outline-primary moxtags-trigger'
+      : 'dropdown-item cursor-pointer no-outline moxtags-trigger';
+
     if (tags.artTags.length > 0) {
-      wrapper.appendChild(buildSubmenuTrigger('Art Tags', tags.artTags, 'art'));
+      wrapper.appendChild(buildSubmenuTrigger('Art Tags', tags.artTags, 'art', triggerClassName));
     }
     if (tags.cardTags.length > 0) {
-      wrapper.appendChild(buildSubmenuTrigger('Card Tags', tags.cardTags, 'otag'));
+      wrapper.appendChild(buildSubmenuTrigger('Card Tags', tags.cardTags, 'otag', triggerClassName));
     }
   }
 
-  function buildSubmenuTrigger(title, tags, searchPrefix) {
+  function buildSubmenuTrigger(title, tags, searchPrefix, className = 'dropdown-item cursor-pointer no-outline moxtags-trigger') {
     const trigger = document.createElement('div');
-    trigger.className = 'dropdown-item cursor-pointer no-outline moxtags-trigger';
+    trigger.className = className;
 
     const label = document.createElement('span');
     label.className = 'moxtags-trigger-label';
@@ -921,10 +1098,10 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
     const submenu = document.createElement('div');
     submenu.className = 'dropdown-menu moxtags-submenu';
 
-    // "Add to Search (N)" button – hidden until checkboxes are ticked.
+    // Combined tag search button – hidden until checkboxes are ticked.
     const searchBtn = document.createElement('button');
     searchBtn.className = 'moxtags-search-btn';
-    searchBtn.textContent = 'Add to Search';
+    searchBtn.textContent = searchActionLabel();
     searchBtn.style.display = 'none';
     submenu.appendChild(searchBtn);
 
@@ -933,7 +1110,7 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
 
     function updateSearchBtn() {
       if (checked.size > 0) {
-        searchBtn.textContent = `Add to Search (${checked.size})`;
+        searchBtn.textContent = searchButtonText(checked.size);
         searchBtn.style.display = '';
       } else {
         searchBtn.style.display = 'none';
@@ -944,8 +1121,7 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
       e.stopPropagation();
       const parts = [...checked].map(slug => `${searchPrefix}:${slug}`);
       const q = parts.join(' ');
-      if (addToSearchAndRun(q)) return;
-      window.location.href = `${deckUrl}/search?q=${encodeURIComponent(q)}`;
+      runTagSearch(q);
     });
 
     for (const tag of tags) {
@@ -969,16 +1145,13 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
       const a = document.createElement('a');
       a.className = 'dropdown-item moxtags-tag-item';
       a.textContent = tag.name;
-      a.title = 'Add to search';
-      a.href = `${deckUrl}/search?q=${encodeURIComponent(searchPrefix + ':' + tag.slug)}`;
+      a.title = tagSearchTitle();
+      a.href = buildTagSearchUrl(searchPrefix + ':' + tag.slug);
       a.addEventListener('click', (e) => {
         e.stopPropagation();
+        e.preventDefault();
         const query = `${searchPrefix}:${tag.slug}`;
-        if (addToSearchAndRun(query)) {
-          e.preventDefault();
-          return;
-        }
-        window.location.href = a.href;
+        runTagSearch(query);
       });
       row.appendChild(a);
 
@@ -1190,21 +1363,20 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'btn btn-sm text-start text-ellipsis btn-outline btn-outline-primary moxtags-moxfield-overlay-search-btn';
-    button.textContent = 'Search by tags';
+    button.textContent = searchTagsOnScryfall ? 'Search Scryfall' : 'Search by tags';
     button.hidden = true;
 
     function updateButton() {
       const count = selected.size;
       button.hidden = count === 0;
-      button.textContent = count > 0 ? `Search by tags (${count})` : 'Search by tags';
+      const label = searchTagsOnScryfall ? 'Search Scryfall' : 'Search by tags';
+      button.textContent = count > 0 ? `${label} (${count})` : label;
     }
 
     button.addEventListener('click', () => {
       const query = [...selected.values()].join(' ');
       if (!query) return;
-      if (addToSearchAndRun(query)) return;
-      const base = deckUrl ? `${deckUrl}/search` : '/search/cards';
-      window.location.href = `${base}?q=${encodeURIComponent(query)}`;
+      runTagSearch(query);
     });
 
     return {
@@ -1286,15 +1458,13 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
     const link = document.createElement('a');
     link.className = 'moxtags-moxfield-overlay-tag-link';
     link.textContent = tag.name;
-    link.title = 'Search Moxfield for this tag';
+    link.title = searchTagsOnScryfall ? 'Search Scryfall for this tag' : 'Search Moxfield for this tag';
     const query = `${searchPrefix}:${tag.slug}`;
-    const base = deckUrl ? `${deckUrl}/search` : '/search/cards';
-    link.href = `${base}?q=${encodeURIComponent(query)}`;
+    link.href = buildTagSearchUrl(query);
     link.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      if (addToSearchAndRun(query)) return;
-      window.location.href = link.href;
+      runTagSearch(query);
     });
     row.appendChild(link);
 
