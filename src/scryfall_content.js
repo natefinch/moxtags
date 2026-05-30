@@ -8,6 +8,7 @@ import {
   buildTagSearchUrl,
 } from './shared/scryfall-page.js';
 import { bindPersistentCollapsibleSection } from './shared/collapsible-state.js';
+import { createTagAutocomplete } from './shared/tag-autocomplete-ui.js';
 
 (function () {
   'use strict';
@@ -15,10 +16,24 @@ import { bindPersistentCollapsibleSection } from './shared/collapsible-state.js'
   const TAG = '[MoxTags Scryfall]';
   const CONTAINER_CLASS = 'moxtags-scryfall-tags';
   const SEARCH_FIELD_ID = 'header-search-field';
+  const tagAutocomplete = createTagAutocomplete({
+    findInputs: () => [
+      document.getElementById(SEARCH_FIELD_ID),
+      document.getElementById('q'),
+    ].filter(Boolean),
+    label: 'Scryfall search field',
+    log,
+    warn,
+    dispatchChangeOnSelect: true,
+    stopHandledKeyPropagation: true,
+    selectOnEnter: true,
+  });
 
   init();
 
   function init() {
+    tagAutocomplete.setup();
+
     const targets = findInsertionTargets();
     if (targets.length === 0) {
       log('No Scryfall card text blocks found, skipping:', location.pathname);

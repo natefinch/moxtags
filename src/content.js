@@ -14,14 +14,16 @@ import {
   extractCardIdFromCardPreviewPanel as _extractCardIdFromCardPreviewPanel,
   findCardPreviewActionPanels as _findCardPreviewActionPanels,
   addToSearchAndRun as _addToSearchAndRun,
+  hasDeckSearchControls as _hasDeckSearchControls,
+  isPublicDeckActionMenu as _isPublicDeckActionMenu,
+  extractCardInfoFromSearchResultCard as _extractCardInfoFromSearchResultCard,
 } from './moxfield/dom.js';
 import {
   readInterceptedDeck as _readInterceptedDeck,
   waitForInterceptedDeck as _waitForInterceptedDeck,
 } from './moxfield/intercept.js';
 import { lookupCardByMoxfieldId as _lookupCardByMoxfieldId } from './moxfield/api.js';
-import { filterAndSortTags, parseInput, renderCount, highlightTag } from './shared/autocomplete.js';
-import { ORACLE_PREFIXES, MAX_VISIBLE } from './shared/constants.js';
+import { createTagAutocomplete } from './shared/tag-autocomplete-ui.js';
 import { bindPersistentCollapsibleSection } from './shared/collapsible-state.js';
 import { buildScryfallSearchUrl } from './shared/scryfall-page.js';
 import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
@@ -57,19 +59,15 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
     }
   });
 
-  // ─── Autocomplete state ────────────────────────────────────────────
-  let acInput = null;           // the #deckbox-search element
-  let acDropdown = null;        // the dropdown container
-  let acItems = [];             // currently rendered items (DOM elements)
-  let acHighlightIdx = -1;     // index of highlighted item
-  let acFilteredTags = [];     // currently filtered tag names
-  let acCurrentPrefix = '';     // e.g. 'otag:'
-  let acCurrentPartial = '';    // text typed after the prefix colon
-  let acWordStart = 0;          // index in input.value where the current prefix word starts
-  let acOracleTagNames = null;  // cached from background
-  let acArtTagNames = null;     // cached from background
-  let acObserver = null;        // MutationObserver for detecting #deckbox-search
-  let acBlurTimer = null;       // delay for blur dismissal
+  const tagAutocomplete = createTagAutocomplete({
+    findInputs: () => {
+      const input = document.getElementById('deckbox-search');
+      return input ? [input] : [];
+    },
+    label: '#deckbox-search',
+    log,
+    warn,
+  });
 
   // ─── Bootstrap ──────────────────────────────────────────────────────
   log('Content script loaded at', location.href);
@@ -316,11 +314,7 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
   }
 
   function isPublicDeckActionMenu(el) {
-    const text = el?.textContent || '';
-    return text.includes('Add to Another Deck')
-      && text.includes('Add to Collection')
-      && text.includes('Add to Wish List')
-      && !text.includes('Change Tags');
+    return _isPublicDeckActionMenu(el, { root: document, deckId });
   }
 
   // ─── Search result card dropdown detection ─────────────────────────
@@ -352,27 +346,16 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
     // a different card visible on the page (e.g. a deck card on the search
     // results page) instead of the one whose Options button was clicked.
     currentCard = null;
-    const nameEl = card.querySelector('.decklist-card-phantomsearch');
-    const name = nameEl?.textContent?.trim();
-    if (!name) {
-      log('Options toggle clicked but no card name found in .decklist-card-phantomsearch');
+    const info = extractCardInfoFromSearchResultCard(card);
+    if (!info) {
+      log('Options toggle clicked but no card identity found in .decklist-card');
       return;
     }
-    const info = cardMap.get(name.toLowerCase());
-    if (info) {
-      lastOptionsCard = info;
-      log('Options click tracked:', name, `(${info.set}/${info.cn})`);
+    lastOptionsCard = info;
+    if (info.set && info.cn) {
+      log('Options click tracked:', info.name, `(${info.set}/${info.cn})`);
     } else {
-      // Card not in deck — try to capture the Moxfield card ID so we can
-      // resolve the exact printing later. Check (in order):
-      //   1. a[href="/cards/{id}-slug"] link within the card element
-      //   2. data-hash attribute on the .decklist-card element
-      const cardLink = card.querySelector('a[href*="/cards/"]');
-      const moxCardId = cardLink
-        ? parseCardIdFromHref(cardLink.getAttribute('href'))
-        : (card.dataset?.hash || null);
-      lastOptionsCard = { name, set: null, cn: null, moxCardId: moxCardId || null };
-      log('Options click tracked:', name, '(not in deck cardMap)', moxCardId ? `moxCardId=${moxCardId}` : 'no moxCardId');
+      log('Options click tracked:', info.name, '(not in deck cardMap)', info.moxCardId ? `moxCardId=${info.moxCardId}` : 'no moxCardId');
     }
   }, true);
 
@@ -398,13 +381,10 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
       // Case A: dropdown is inside a .decklist-card container.
       const card = menu.closest('.decklist-card');
       if (card) {
-        const nameEl = card.querySelector('.decklist-card-phantomsearch');
-        const name = nameEl?.textContent?.trim();
-        if (!name) continue;
-        const info = cardMap.get(name.toLowerCase());
+        const info = extractCardInfoFromSearchResultCard(card);
         if (!info) continue;
         currentCard = info;
-        log('Card dropdown detected (inline):', name);
+        log('Card dropdown detected (inline):', info.name || info.moxCardId);
         injectTagsIntoMenu(menu);
         continue;
       }
@@ -429,6 +409,10 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
       log('Card dropdown detected (portal):', currentCard.name);
       injectTagsIntoMenu(menu);
     }
+  }
+
+  function extractCardInfoFromSearchResultCard(card) {
+    return _extractCardInfoFromSearchResultCard(card, cardMap);
   }
 
   // ─── Polling fallback ──────────────────────────────────────────────
@@ -1012,12 +996,24 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
 
   function markSearchTagsOnScryfall(reason) {
     if (searchTagsOnScryfall) return;
+    if (canSearchDeckPage()) {
+      log('Keeping tag search target on deck page:', reason);
+      return;
+    }
     searchTagsOnScryfall = true;
     log('Tag search target set to Scryfall:', reason);
   }
 
+  function canSearchDeckPage() {
+    return _hasDeckSearchControls(document, deckId);
+  }
+
+  function shouldSearchTagsOnScryfall() {
+    return searchTagsOnScryfall && !canSearchDeckPage();
+  }
+
   function searchActionLabel() {
-    return searchTagsOnScryfall ? 'Search Scryfall' : 'Add to Search';
+    return shouldSearchTagsOnScryfall() ? 'Search Scryfall' : 'Add to Search';
   }
 
   function searchButtonText(count) {
@@ -1026,11 +1022,11 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
   }
 
   function tagSearchTitle() {
-    return searchTagsOnScryfall ? 'Search Scryfall for this tag' : 'Add to search';
+    return shouldSearchTagsOnScryfall() ? 'Search Scryfall for this tag' : 'Add to search';
   }
 
   function buildTagSearchUrl(query) {
-    if (searchTagsOnScryfall) {
+    if (shouldSearchTagsOnScryfall()) {
       return buildScryfallSearchUrl(query);
     }
     const base = deckUrl ? `${deckUrl}/search` : '/search/cards';
@@ -1038,7 +1034,7 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
   }
 
   function runTagSearch(query) {
-    if (searchTagsOnScryfall) {
+    if (shouldSearchTagsOnScryfall()) {
       window.location.href = buildScryfallSearchUrl(query);
       return true;
     }
@@ -1363,13 +1359,13 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'btn btn-sm text-start text-ellipsis btn-outline btn-outline-primary moxtags-moxfield-overlay-search-btn';
-    button.textContent = searchTagsOnScryfall ? 'Search Scryfall' : 'Search by tags';
+    button.textContent = tagSearchButtonLabel();
     button.hidden = true;
 
     function updateButton() {
       const count = selected.size;
       button.hidden = count === 0;
-      const label = searchTagsOnScryfall ? 'Search Scryfall' : 'Search by tags';
+      const label = tagSearchButtonLabel();
       button.textContent = count > 0 ? `${label} (${count})` : label;
     }
 
@@ -1458,7 +1454,9 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
     const link = document.createElement('a');
     link.className = 'moxtags-moxfield-overlay-tag-link';
     link.textContent = tag.name;
-    link.title = searchTagsOnScryfall ? 'Search Scryfall for this tag' : 'Search Moxfield for this tag';
+    link.title = shouldSearchTagsOnScryfall()
+      ? 'Search Scryfall for this tag'
+      : 'Search Moxfield for this tag';
     const query = `${searchPrefix}:${tag.slug}`;
     link.href = buildTagSearchUrl(query);
     link.addEventListener('click', (e) => {
@@ -1469,6 +1467,10 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
     row.appendChild(link);
 
     return row;
+  }
+
+  function tagSearchButtonLabel() {
+    return shouldSearchTagsOnScryfall() ? 'Search Scryfall' : 'Search by tags';
   }
 
   // ─── Change Tags dialog injection ──────────────────────────────────
@@ -1751,247 +1753,11 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
   // or art:/atag:/arttag: in the #deckbox-search input.
 
   function setupAutocomplete() {
-    acInput = document.getElementById('deckbox-search');
-    if (acInput) {
-      attachAutocomplete(acInput);
-    } else {
-      // Watch for it to appear (React may render it later).
-      acObserver = new MutationObserver(() => {
-        const el = document.getElementById('deckbox-search');
-        if (el) {
-          acObserver.disconnect();
-          acObserver = null;
-          acInput = el;
-          attachAutocomplete(el);
-        }
-      });
-      acObserver.observe(document.body, { childList: true, subtree: true });
-    }
-  }
-
-  function attachAutocomplete(input) {
-    log('Autocomplete attached to #deckbox-search');
-    input.addEventListener('input', onAcInput);
-    input.addEventListener('keydown', onAcKeydown);
-    input.addEventListener('blur', onAcBlur);
-    input.addEventListener('focus', onAcFocus);
+    tagAutocomplete.setup();
   }
 
   function detachAutocomplete() {
-    if (acInput) {
-      acInput.removeEventListener('input', onAcInput);
-      acInput.removeEventListener('keydown', onAcKeydown);
-      acInput.removeEventListener('blur', onAcBlur);
-      acInput.removeEventListener('focus', onAcFocus);
-      acInput = null;
-    }
-    if (acObserver) {
-      acObserver.disconnect();
-      acObserver = null;
-    }
-    closeAcDropdown();
-  }
-
-  function onAcFocus() {
-    // Re-evaluate on focus in case the input already has a prefix.
-    onAcInput();
-  }
-
-  function onAcInput() {
-    if (!acInput) return;
-    const val = acInput.value;
-    const cursor = acInput.selectionStart ?? val.length;
-
-    const parsed = parseInput(val, cursor);
-    if (!parsed || !parsed.partial) {
-      closeAcDropdown();
-      return;
-    }
-
-    acCurrentPrefix = parsed.prefix;
-    acWordStart = parsed.wordStart;
-
-    // Determine which tag list to use.
-    const isOracle = parsed.isOracle;
-
-    // Ensure we have tag names.
-    if (isOracle && acOracleTagNames) {
-      showFilteredTags(acOracleTagNames, parsed.partial);
-    } else if (!isOracle && acArtTagNames) {
-      showFilteredTags(acArtTagNames, parsed.partial);
-    } else {
-      // Need to fetch tag names from background.
-      const matchedPrefix = parsed.prefix;
-      fetchTagNames().then(() => {
-        // Re-check — the input may have changed while we were fetching.
-        if (acInput && acCurrentPrefix === matchedPrefix) {
-          const list = isOracle ? acOracleTagNames : acArtTagNames;
-          if (list) showFilteredTags(list, parsed.partial);
-        }
-      });
-    }
-  }
-
-  function fetchTagNames() {
-    return new Promise((resolve) => {
-      chrome.runtime.sendMessage({ type: 'getTagNames' }, (resp) => {
-        if (chrome.runtime.lastError) {
-          warn('getTagNames failed:', chrome.runtime.lastError.message);
-          return resolve();
-        }
-        if (resp?.ok) {
-          acOracleTagNames = resp.oracleTagNames || [];
-          acArtTagNames = resp.artTagNames || [];
-          log('Tag names loaded:', acOracleTagNames.length, 'oracle,', acArtTagNames.length, 'art');
-        }
-        resolve();
-      });
-    });
-  }
-
-  function showFilteredTags(tagList, partial) {
-    acFilteredTags = filterAndSortTags(tagList, partial);
-    acCurrentPartial = partial.toLowerCase();
-
-    if (acFilteredTags.length === 0) {
-      closeAcDropdown();
-      return;
-    }
-
-    renderAcDropdown();
-  }
-
-  function renderAcDropdown() {
-    if (!acInput) return;
-
-    if (!acDropdown) {
-      acDropdown = document.createElement('div');
-      acDropdown.className = 'moxtags-autocomplete';
-      // Prevent dropdown clicks from blurring the input.
-      acDropdown.addEventListener('mousedown', (e) => e.preventDefault());
-      document.body.appendChild(acDropdown);
-    }
-
-    // Position below the search box.
-    const rect = acInput.getBoundingClientRect();
-    acDropdown.style.left = rect.left + window.scrollX + 'px';
-    acDropdown.style.top = rect.bottom + window.scrollY + 2 + 'px';
-    acDropdown.style.minWidth = rect.width + 'px';
-
-    // Cap rendered items for short partials to avoid DOM bloat; remove cap at 3+ chars.
-    const count = renderCount(acFilteredTags.length, acCurrentPartial.length);
-    acDropdown.innerHTML = '';
-    acItems = [];
-    acHighlightIdx = 0;
-
-    for (let i = 0; i < count; i++) {
-      const tag = acFilteredTags[i];
-      const item = document.createElement('div');
-      item.className = 'moxtags-autocomplete-item';
-      item.appendChild(buildHighlightedTag(tag, acCurrentPartial));
-      item.dataset.index = i;
-
-      item.addEventListener('click', () => selectAcItem(i));
-      item.addEventListener('mouseenter', () => highlightAcItem(i));
-
-      acDropdown.appendChild(item);
-      acItems.push(item);
-    }
-
-    highlightAcItem(0);
-    acDropdown.style.display = '';
-  }
-
-  /**
-   * Build a document fragment for a tag name with the matched portion
-   * of each matching dash-delimited word wrapped in <b>.
-   */
-  function buildHighlightedTag(tag, partial) {
-    const segments = highlightTag(tag, partial);
-    const frag = document.createDocumentFragment();
-    for (const seg of segments) {
-      if (seg.bold) {
-        const b = document.createElement('b');
-        b.textContent = seg.text;
-        frag.appendChild(b);
-      } else {
-        frag.appendChild(document.createTextNode(seg.text));
-      }
-    }
-    return frag;
-  }
-
-  function highlightAcItem(idx) {
-    if (idx < 0 || idx >= acItems.length) return;
-    if (acHighlightIdx >= 0 && acHighlightIdx < acItems.length) {
-      acItems[acHighlightIdx].classList.remove('highlighted');
-    }
-    acHighlightIdx = idx;
-    acItems[idx].classList.add('highlighted');
-    // Scroll into view if needed.
-    acItems[idx].scrollIntoView({ block: 'nearest' });
-  }
-
-  function selectAcItem(idx) {
-    if (idx < 0 || idx >= acFilteredTags.length) return;
-    if (!acInput) return;
-
-    const tag = acFilteredTags[idx];
-    const val = acInput.value;
-    const cursor = acInput.selectionStart ?? val.length;
-
-    // Replace from wordStart to cursor with prefix + tag + trailing space.
-    const before = val.substring(0, acWordStart);
-    const after = val.substring(cursor);
-    const insertion = acCurrentPrefix + tag + ' ';
-    acInput.value = before + insertion + after;
-
-    // Place cursor after the inserted text.
-    const newCursor = acWordStart + insertion.length;
-    acInput.setSelectionRange(newCursor, newCursor);
-
-    // Fire input event so Moxfield's React picks up the change.
-    acInput.dispatchEvent(new Event('input', { bubbles: true }));
-
-    closeAcDropdown();
-    acInput.focus();
-  }
-
-  function closeAcDropdown() {
-    if (acDropdown) {
-      acDropdown.remove();
-      acDropdown = null;
-    }
-    acItems = [];
-    acHighlightIdx = -1;
-    acFilteredTags = [];
-  }
-
-  function onAcKeydown(e) {
-    if (!acDropdown || acItems.length === 0) return;
-
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      const next = (acHighlightIdx + 1) % acItems.length;
-      highlightAcItem(next);
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      const prev = (acHighlightIdx - 1 + acItems.length) % acItems.length;
-      highlightAcItem(prev);
-    } else if (e.key === 'Tab') {
-      e.preventDefault();
-      selectAcItem(acHighlightIdx);
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      closeAcDropdown();
-    }
-  }
-
-  function onAcBlur() {
-    // Delay to allow click events on dropdown items to fire first.
-    acBlurTimer = setTimeout(() => {
-      closeAcDropdown();
-    }, 200);
+    tagAutocomplete.detach();
   }
 
   // ─── Logging helpers ──────────────────────────────────────────────

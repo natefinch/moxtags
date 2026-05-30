@@ -8,6 +8,7 @@ import {
   parseCardIdentityFromDeckCard,
 } from './shared/archidekt-page.js';
 import { bindPersistentCollapsibleSection } from './shared/collapsible-state.js';
+import { createTagAutocomplete } from './shared/tag-autocomplete-ui.js';
 
 (function () {
   'use strict';
@@ -27,6 +28,8 @@ import { bindPersistentCollapsibleSection } from './shared/collapsible-state.js'
   const SEARCH_CONTAINER_SELECTOR = '[class*="searchV2_container"]';
   const SYNTAX_FORM_SELECTOR = '[class*="scryfallSearchForm_form"]';
   const SYNTAX_INPUT_SELECTOR = '[class*="scryfallSearchForm_input"] input[type="text"], input[placeholder="color:red cmc:1"]';
+  const QUICK_ADD_SYNTAX_INPUT_SELECTOR = '[class*="quickAddCard_input"], input[placeholder^="is:shockland"]';
+  const TAG_AUTOCOMPLETE_INPUT_SELECTOR = `${QUICK_ADD_SYNTAX_INPUT_SELECTOR}, ${SYNTAX_INPUT_SELECTOR}`;
   const CARD_CLASS_FRAGMENTS = [
     'basicCard_container',
     'deckCardWrapper_container',
@@ -52,12 +55,23 @@ import { bindPersistentCollapsibleSection } from './shared/collapsible-state.js'
   let lastMenuScanDebug = '';
   let lastActivationDebug = '';
   const tagCache = new Map();
+  const tagAutocomplete = createTagAutocomplete({
+    findInputs: () => document.querySelectorAll(TAG_AUTOCOMPLETE_INPUT_SELECTOR),
+    label: 'Archidekt search input',
+    log,
+    warn,
+    dispatchChangeOnSelect: true,
+    stopHandledKeyPropagation: true,
+    selectOnEnter: true,
+    observeMutations: false,
+  });
 
   log('Content script loaded:', { debugBuild: DEBUG_BUILD, ...describePageState() });
   init();
 
   function init() {
     log('init()', describePageState());
+    tagAutocomplete.setup();
     watchNavigation();
     watchDeckActivation();
 
@@ -166,6 +180,7 @@ import { bindPersistentCollapsibleSection } from './shared/collapsible-state.js'
     }
 
     activationObserver = new MutationObserver(() => {
+      tagAutocomplete.scan();
       if (isDeckPage()) {
         const activationKey = `${location.href}|${deckInitialized}`;
         if (activationKey !== lastActivationDebug) {
@@ -258,6 +273,7 @@ import { bindPersistentCollapsibleSection } from './shared/collapsible-state.js'
   }
 
   function onMutations() {
+    tagAutocomplete.scan();
     schedulePrefetchVisibleCards();
     scanForMenu();
     scanForCardDetails();

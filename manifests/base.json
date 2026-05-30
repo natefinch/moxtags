@@ -48,10 +48,8 @@
     },
     {
       "matches": [
-        "https://scryfall.com/card/*",
-        "https://www.scryfall.com/card/*",
-        "https://scryfall.com/search*",
-        "https://www.scryfall.com/search*"
+        "https://scryfall.com/*",
+        "https://www.scryfall.com/*"
       ],
       "js": [
         "scryfall_content.js"
