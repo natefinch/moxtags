@@ -11,10 +11,13 @@ const SEARCH_LONG_URL = 'https://www.moxfield.com/search/cards?q=e2e-long';
 const MOXFIELD_CARD_URL = 'https://www.moxfield.com/cards/vPo0V-e2e-test-card';
 const CARD_DETAILS_URL = 'https://api2.moxfield.com/v2/cards/details/vPo0V';
 const SCRYFALL_CARD_URL = 'https://scryfall.com/card/e2e/1/e2e-test-card';
+const SCRYFALL_SEARCH_URL = 'https://scryfall.com/search?q=e2e';
 const ARCHIDEKT_DECK_URL = 'https://archidekt.com/decks/e2e-archidekt';
 const ARCHIDEKT_DECK_API_URL = 'https://archidekt.com/api/decks/e2e-archidekt/';
 const TEST_ORACLE_ID = '7404c078-228b-4296-bf1f-62f57bf832d9';
 const TEST_ILLUSTRATION_ID = '45859cfd-16b0-44d0-a2ff-2a9b1df5bccd';
+const TEST_ORACLE_ID_2 = '89206da7-7474-4f66-b772-eb31e536b5ad';
+const TEST_ILLUSTRATION_ID_2 = '3ca67e5f-fbb0-4458-97fc-183a8228ad09';
 
 const deckJson = {
   mainboard: {
@@ -153,6 +156,30 @@ function cardPageFixtureHtml() {
             <div class="col"><span aria-label="Not Legal"></span></div>
             <div class="col"><span aria-label="Banned"></span></div>
           </div>
+        </main>
+      </body>
+    </html>`;
+}
+
+function scryfallSearchFixtureHtml() {
+  return `<!doctype html>
+    <html>
+      <head><title>Scryfall E2E Search Fixture</title></head>
+      <body>
+        <header>
+          <form action="/search">
+            <input id="header-search-field" name="q" type="search" value="">
+          </form>
+        </header>
+        <main>
+          <article class="card-profile" data-testid="scryfall-result-one">
+            <a class="print-langs-item current" href="/card/e2e/1/e2e-test-card">English</a>
+            <p class="card-text-artist">Illustrated by E2E Artist</p>
+          </article>
+          <article class="card-profile" data-testid="scryfall-result-two">
+            <a class="print-langs-item current" href="/card/e2b/2/e2e-second-card">English</a>
+            <p class="card-text-artist">Illustrated by Second E2E Artist</p>
+          </article>
         </main>
       </body>
     </html>`;
@@ -340,6 +367,12 @@ async function installDeterministicRoutes(context, counters) {
     body: scryfallCardFixtureHtml(),
   }));
 
+  await context.route(SCRYFALL_SEARCH_URL, route => route.fulfill({
+    status: 200,
+    contentType: 'text/html',
+    body: scryfallSearchFixtureHtml(),
+  }));
+
   await context.route('https://api.scryfall.com/cards/collection', async route => {
     counters.scryfallCollection = (counters.scryfallCollection || 0) + 1;
     return route.fulfill({
@@ -368,11 +401,26 @@ async function installDeterministicRoutes(context, counters) {
     });
   });
 
+  await context.route('https://api.scryfall.com/cards/e2b/2', route => {
+    counters.scryfallCardFallback = (counters.scryfallCardFallback || 0) + 1;
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        oracle_id: TEST_ORACLE_ID_2,
+        illustration_id: TEST_ILLUSTRATION_ID_2,
+      }),
+    });
+  });
+
   await context.route('https://api.scryfall.com/private/tags/oracle', route => route.fulfill({
     status: 200,
     contentType: 'application/json',
     body: JSON.stringify({
-      data: [{ label: 'card-tag', oracle_ids: [TEST_ORACLE_ID] }],
+      data: [
+        { label: 'card-tag', oracle_ids: [TEST_ORACLE_ID] },
+        { label: 'second-card-tag', oracle_ids: [TEST_ORACLE_ID_2] },
+      ],
     }),
   }));
 
@@ -380,7 +428,10 @@ async function installDeterministicRoutes(context, counters) {
     status: 200,
     contentType: 'application/json',
     body: JSON.stringify({
-      data: [{ label: 'art-tag', illustration_ids: [TEST_ILLUSTRATION_ID] }],
+      data: [
+        { label: 'art-tag', illustration_ids: [TEST_ILLUSTRATION_ID] },
+        { label: 'second-art-tag', illustration_ids: [TEST_ILLUSTRATION_ID_2] },
+      ],
     }),
   }));
 }
@@ -898,7 +949,6 @@ test.describe('Playwright extension foundation', () => {
 
   test('injects Scryfall card-page tag sections after the artist credit', async () => {
     const { context, close, networkGuard } = await launchGuardedContext();
-
     const page = await context.newPage();
 
     try {
@@ -942,6 +992,57 @@ test.describe('Playwright extension foundation', () => {
       // This proof is load-bearing: it verifies Playwright is still routing
       // both page and MV3 service-worker fetches through the guard.
     } finally {
+      await close();
+    }
+  });
+
+  test('injects Scryfall search-result tag sections with batch fallback and search links', async () => {
+    const { context, close, counters, networkGuard } = await launchGuardedContext();
+    const page = await context.newPage();
+
+    try {
+      await page.goto(SCRYFALL_SEARCH_URL, { waitUntil: 'domcontentloaded' });
+
+      const sections = page.locator('.card-profile p.card-text-artist + section[data-moxtags-surface="scryfall-card"]');
+      await expect(sections).toHaveCount(2, { timeout: 15_000 });
+      await expect(sections.nth(0)).toHaveAttribute('data-moxtags-card-key', 'e2e/1');
+      await expect(sections.nth(1)).toHaveAttribute('data-moxtags-card-key', 'e2b/2');
+
+      await expect(sections.nth(0).locator('[data-moxtags-section="card-tags"]')).toHaveCount(1);
+      await expect(sections.nth(0).locator('[data-moxtags-section="art-tags"]')).toHaveCount(1);
+      await expect(sections.nth(0).locator('.moxtags-scryfall-tag-link', { hasText: 'card-tag' }))
+        .toHaveCount(1);
+      await expect(sections.nth(0).locator('.moxtags-scryfall-tag-link', { hasText: 'art-tag' }))
+        .toHaveCount(1);
+      await expect(sections.nth(1).locator('.moxtags-scryfall-tag-link', { hasText: 'second-card-tag' }))
+        .toHaveCount(1);
+      await expect(sections.nth(1).locator('.moxtags-scryfall-tag-link', { hasText: 'second-art-tag' }))
+        .toHaveCount(1);
+
+      expect(counters.scryfallCollection).toBe(1);
+      expect(counters.scryfallCardFallback).toBe(1);
+      await expect(sections.locator('input[type="checkbox"]')).toHaveCount(0);
+      await expect(sections.locator('button', { hasText: /search/i })).toHaveCount(0);
+
+      const searchField = page.locator('#header-search-field');
+      await sections.nth(0).locator('.moxtags-scryfall-tag-link', { hasText: 'card-tag' }).click();
+      await expect(searchField).toHaveValue('otag:card-tag');
+      await sections.nth(0).locator('.moxtags-scryfall-tag-link', { hasText: 'art-tag' }).click();
+      await expect(searchField).toHaveValue('otag:card-tag art:art-tag');
+      await sections.nth(0).locator('.moxtags-scryfall-tag-link', { hasText: 'card-tag' }).click();
+      await expect(searchField).toHaveValue('otag:card-tag art:art-tag');
+
+      await expect(sections.nth(0).locator('[data-moxtags-trigger="card-tags"]'))
+        .toHaveAttribute('aria-expanded', 'true');
+      await sections.nth(0).locator('[data-moxtags-trigger="card-tags"]').click();
+      await expect(sections.nth(0).locator('[data-moxtags-section="card-tags"] .moxtags-scryfall-section-body'))
+        .toBeHidden();
+      await expect(sections.nth(1).locator('[data-moxtags-section="card-tags"] .moxtags-scryfall-section-body'))
+        .toBeHidden();
+      await expect(sections.nth(1).locator('[data-moxtags-trigger="card-tags"]'))
+        .toHaveAttribute('aria-expanded', 'false');
+    } finally {
+      networkGuard.assertNoEscapes();
       await close();
     }
   });
