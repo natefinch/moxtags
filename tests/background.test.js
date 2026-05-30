@@ -6,9 +6,11 @@ import assert from 'node:assert/strict';
 
 const ORACLE_ID = 'oracle-e2e';
 const ILLUSTRATION_ID = 'illustration-e2e';
+const SECOND_ORACLE_ID = 'oracle-second';
+const SECOND_ILLUSTRATION_ID = 'illustration-second';
 
-function makeStorageArea() {
-  const store = new Map();
+function makeStorageArea(initial = {}) {
+  const store = new Map(Object.entries(initial));
   return {
     async get(keys) {
       if (Array.isArray(keys)) {
@@ -27,27 +29,54 @@ function makeStorageArea() {
   };
 }
 
-async function loadBackground({ fetchImpl } = {}) {
+function storedIndexes({
+  oracleId = ORACLE_ID,
+  illustrationId = ILLUSTRATION_ID,
+  cardTag = 'stored-card-tag',
+  artTag = 'stored-art-tag',
+  timestamp = Date.now(),
+} = {}) {
+  return {
+    oracleIndex: [[oracleId, [{ name: cardTag, slug: cardTag }]]],
+    illustrationIndex: [[illustrationId, [{ name: artTag, slug: artTag }]]],
+    oracleTagNames: [cardTag],
+    artTagNames: [artTag],
+    tagDataTimestamp: timestamp,
+  };
+}
+
+function flushAsync() {
+  return new Promise(resolve => setTimeout(resolve, 0));
+}
+
+async function loadBackground({ fetchImpl, storageSeed = {}, bundledData = true } = {}) {
   const messageListeners = [];
   const installedListeners = [];
   const startupListeners = [];
   const alarmListeners = [];
-  const storageLocal = makeStorageArea();
+  const alarmsCreated = [];
+  const storageLocal = makeStorageArea(storageSeed);
   const sessionRules = [];
 
   globalThis.self = globalThis;
-  globalThis.__MOXTAGS_ORACLE = {
-    t: ['card-tag'],
-    d: { [ORACLE_ID]: [0] },
-  };
-  globalThis.__MOXTAGS_ILLUS_1 = {
-    t: ['art-tag'],
-    d: { [ILLUSTRATION_ID]: [0] },
-  };
-  globalThis.__MOXTAGS_ILLUS_2 = {
-    t: ['art-tag'],
-    d: {},
-  };
+  if (bundledData) {
+    globalThis.__MOXTAGS_ORACLE = {
+      t: ['card-tag'],
+      d: { [ORACLE_ID]: [0] },
+    };
+    globalThis.__MOXTAGS_ILLUS_1 = {
+      t: ['art-tag'],
+      d: { [ILLUSTRATION_ID]: [0] },
+    };
+    globalThis.__MOXTAGS_ILLUS_2 = {
+      t: ['art-tag'],
+      d: {},
+    };
+  } else {
+    delete globalThis.__MOXTAGS_ORACLE;
+    delete globalThis.__MOXTAGS_ILLUS_1;
+    delete globalThis.__MOXTAGS_ILLUS_2;
+  }
   globalThis.importScripts = () => {};
 
   globalThis.fetch = fetchImpl || (async (url) => {
@@ -56,6 +85,12 @@ async function loadBackground({ fetchImpl } = {}) {
       return new Response(JSON.stringify({
         oracle_id: ORACLE_ID,
         illustration_id: ILLUSTRATION_ID,
+      }), { status: 200 });
+    }
+    if (textUrl.includes('/cards/def/2')) {
+      return new Response(JSON.stringify({
+        oracle_id: SECOND_ORACLE_ID,
+        illustration_id: SECOND_ILLUSTRATION_ID,
       }), { status: 200 });
     }
     if (textUrl.includes('/cards/named?')) {
@@ -91,7 +126,7 @@ async function loadBackground({ fetchImpl } = {}) {
     },
     storage: { local: storageLocal },
     alarms: {
-      create: () => {},
+      create: (name, info) => alarmsCreated.push({ name, info }),
       onAlarm: { addListener: fn => alarmListeners.push(fn) },
     },
     declarativeNetRequest: {
@@ -106,6 +141,7 @@ async function loadBackground({ fetchImpl } = {}) {
     installedListeners,
     startupListeners,
     alarmListeners,
+    alarmsCreated,
     storageLocal,
     sessionRules,
   };
@@ -200,5 +236,166 @@ describe('background message handling', () => {
     const status = await response;
     assert.equal(status.oracleCount, 1);
     assert.equal(status.illustrationCount, 1);
+  });
+
+  it('returns true for every asynchronous message path', async () => {
+    const { listener } = await loadBackground();
+    const messages = [
+      { type: 'fetch', url: 'https://example.test/data' },
+      { type: 'fetchTags', set: 'abc', number: '1' },
+      { type: 'fetchTagsByName', name: 'Any Card' },
+      { type: 'prefetchDeck', cards: [{ set: 'abc', cn: '1' }] },
+      { type: 'getStatus' },
+      { type: 'refreshTags' },
+      { type: 'getTagNames' },
+    ];
+
+    for (const message of messages) {
+      const { keepAlive, response } = sendMessage(listener, message);
+      assert.equal(keepAlive, true, `${message.type} should keep the message channel alive`);
+      await response;
+    }
+  });
+
+  it('cold-starts from persisted indexes when bundled globals are unavailable', async () => {
+    const { listener } = await loadBackground({
+      bundledData: false,
+      storageSeed: storedIndexes(),
+      fetchImpl: async (url) => {
+        throw new Error(`unexpected fetch for ${url}`);
+      },
+    });
+
+    const names = sendMessage(listener, { type: 'getTagNames' });
+    assert.equal(names.keepAlive, true);
+    assert.deepEqual(await names.response, {
+      ok: true,
+      oracleTagNames: ['stored-card-tag'],
+      artTagNames: ['stored-art-tag'],
+    });
+
+    const status = await sendMessage(listener, { type: 'getStatus' }).response;
+    assert.equal(status.oracleCount, 1);
+    assert.equal(status.illustrationCount, 1);
+  });
+
+  it('keeps prefetchDeck results for cards resolved before partial collection misses', async () => {
+    const { listener } = await loadBackground({
+      fetchImpl: async (url) => {
+        const textUrl = String(url);
+        if (textUrl.startsWith('chrome-extension://')) {
+          return new Response('{}', { status: 404 });
+        }
+        if (textUrl.includes('/cards/collection')) {
+          return new Response(JSON.stringify({
+            data: [{
+              set: 'abc',
+              collector_number: '1',
+              oracle_id: ORACLE_ID,
+              illustration_id: ILLUSTRATION_ID,
+            }],
+          }), { status: 200 });
+        }
+        return new Response('unexpected', { status: 500 });
+      },
+    });
+
+    const { keepAlive, response } = sendMessage(listener, {
+      type: 'prefetchDeck',
+      cards: [{ set: 'abc', cn: '1' }, { set: 'missing', cn: '9' }],
+    });
+
+    assert.equal(keepAlive, true);
+    const result = await response;
+    assert.equal(result.ok, true);
+    assert.deepEqual(Object.keys(result.tags), ['abc/1']);
+    assert.deepEqual(result.tags['abc/1'].cardTags, [{ name: 'card-tag', slug: 'card-tag' }]);
+  });
+
+  it('does not poison the card cache after a failed exact lookup', async () => {
+    let exactLookups = 0;
+    const { listener } = await loadBackground({
+      fetchImpl: async (url) => {
+        const textUrl = String(url);
+        if (textUrl.startsWith('chrome-extension://')) {
+          return new Response('{}', { status: 404 });
+        }
+        if (textUrl.includes('/cards/miss/1')) {
+          exactLookups++;
+          if (exactLookups === 1) {
+            return new Response('temporary failure', { status: 503 });
+          }
+          return new Response(JSON.stringify({
+            oracle_id: ORACLE_ID,
+            illustration_id: ILLUSTRATION_ID,
+          }), { status: 200 });
+        }
+        return new Response('unexpected', { status: 500 });
+      },
+    });
+
+    const first = await sendMessage(listener, { type: 'fetchTags', set: 'miss', number: '1' }).response;
+    assert.equal(first.ok, false);
+    assert.match(first.error, /HTTP 503/);
+
+    const second = await sendMessage(listener, { type: 'fetchTags', set: 'miss', number: '1' }).response;
+    assert.equal(second.ok, true);
+    assert.deepEqual(second.cardTags, [{ name: 'card-tag', slug: 'card-tag' }]);
+    assert.equal(exactLookups, 2);
+  });
+
+  it('updates refreshTags status on success and failure', async () => {
+    const success = await loadBackground({ bundledData: false });
+    const successResult = await sendMessage(success.listener, { type: 'refreshTags' }).response;
+    assert.deepEqual(successResult, { ok: true });
+
+    const successStatus = await sendMessage(success.listener, { type: 'getStatus' }).response;
+    assert.equal(successStatus.oracleCount, 1);
+    assert.equal(successStatus.illustrationCount, 1);
+    assert.equal(successStatus.lastError, null);
+
+    const failure = await loadBackground({
+      bundledData: false,
+      fetchImpl: async (url) => {
+        const textUrl = String(url);
+        if (textUrl.includes('/private/tags/oracle')) {
+          return new Response('no oracle tags', { status: 503 });
+        }
+        if (textUrl.includes('/private/tags/illustration')) {
+          return new Response(JSON.stringify({ data: [] }), { status: 200 });
+        }
+        return new Response('{}', { status: 404 });
+      },
+    });
+
+    const failureResult = await sendMessage(failure.listener, { type: 'refreshTags' }).response;
+    assert.equal(failureResult.ok, false);
+    assert.match(failureResult.error, /oracle=503/);
+
+    const failureStatus = await sendMessage(failure.listener, { type: 'getStatus' }).response;
+    assert.match(failureStatus.lastError, /oracle=503/);
+    assert.equal(failureStatus.refreshing, false);
+  });
+
+  it('runs alarm-triggered refreshes and schedules success and retry alarms', async () => {
+    const success = await loadBackground({ bundledData: false });
+    success.alarmListeners[0]({ name: 'refreshTagData' });
+    await flushAsync();
+
+    assert.equal(success.alarmsCreated.length, 1);
+    assert.equal(success.alarmsCreated[0].name, 'refreshTagData');
+    assert.ok(success.alarmsCreated[0].info.delayInMinutes >= 24 * 60);
+
+    const failure = await loadBackground({
+      bundledData: false,
+      fetchImpl: async () => new Response('tag API unavailable', { status: 500 }),
+    });
+    failure.alarmListeners[0]({ name: 'refreshTagData' });
+    await flushAsync();
+
+    assert.deepEqual(failure.alarmsCreated, [{
+      name: 'refreshTagData',
+      info: { delayInMinutes: 60 },
+    }]);
   });
 });

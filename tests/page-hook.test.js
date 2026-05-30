@@ -25,8 +25,14 @@ function flushAsync() {
   return new Promise(resolve => setTimeout(resolve, 0));
 }
 
-function createHarness({ fetchImpl, xhrResponse = deckJson } = {}) {
+function createHarness({
+  fetchImpl,
+  xhrResponse = deckJson,
+  xhrStatus = 200,
+  xhrEvent = 'load',
+} = {}) {
   const { window, document } = parseHTML('<!doctype html><html><head></head><body></body></html>');
+  delete window.__MOXTAGS_PAGE_HOOK_INSTALLED__;
 
   const postedMessages = [];
   window.postMessage = (data) => {
@@ -45,9 +51,11 @@ function createHarness({ fetchImpl, xhrResponse = deckJson } = {}) {
     }
 
     send() {
-      this.status = 200;
-      this.responseText = JSON.stringify(xhrResponse);
-      this.dispatchEvent(new window.Event('load'));
+      this.status = xhrStatus;
+      this.responseText = typeof xhrResponse === 'string'
+        ? xhrResponse
+        : JSON.stringify(xhrResponse);
+      this.dispatchEvent(new window.Event(xhrEvent));
     }
   }
 
@@ -91,9 +99,10 @@ function createHarness({ fetchImpl, xhrResponse = deckJson } = {}) {
   };
 
   vm.createContext(sandbox);
-  vm.runInContext(HOOK_SOURCE, sandbox, { filename: 'page_hook.js' });
+  const runHook = () => vm.runInContext(HOOK_SOURCE, sandbox, { filename: 'page_hook.js' });
+  runHook();
 
-  return { window, document, calls, postedMessages, XMLHttpRequest: FakeXMLHttpRequest };
+  return { window, document, calls, postedMessages, XMLHttpRequest: FakeXMLHttpRequest, runHook };
 }
 
 function readPublishedDeck(document) {
@@ -147,6 +156,44 @@ describe('page_hook.js fetch interception', () => {
     await flushAsync();
     assert.deepEqual(readPublishedDeck(document), secondDeck);
   });
+
+  it('does not double-wrap fetch or double-publish data if injected twice', async () => {
+    const { window, document, runHook } = createHarness();
+
+    runHook();
+    await window.fetch(DECK_URL);
+    await flushAsync();
+
+    assert.equal(document.querySelectorAll('#moxtags-deck-json').length, 1);
+    assert.deepEqual(readPublishedDeck(document), deckJson);
+  });
+
+  it('preserves deck fetch rejections without publishing stale data', async () => {
+    const { window, document } = createHarness({
+      fetchImpl: async () => {
+        throw new Error('network unavailable');
+      },
+    });
+
+    await assert.rejects(() => window.fetch(DECK_URL), /network unavailable/);
+    await flushAsync();
+
+    assert.equal(document.getElementById('moxtags-deck-json'), null);
+    assert.equal(document.documentElement.getAttribute('data-moxtags-deck'), null);
+  });
+
+  it('ignores non-JSON deck fetch responses', async () => {
+    const { window, document } = createHarness({
+      fetchImpl: async () => new Response('<html>not json</html>', { status: 200 }),
+    });
+
+    const response = await window.fetch(DECK_URL);
+    assert.equal(response.ok, true);
+    await flushAsync();
+
+    assert.equal(document.getElementById('moxtags-deck-json'), null);
+    assert.equal(document.documentElement.getAttribute('data-moxtags-deck'), null);
+  });
 });
 
 describe('page_hook.js XHR interception', () => {
@@ -161,9 +208,43 @@ describe('page_hook.js XHR interception', () => {
     assert.equal(document.documentElement.getAttribute('data-moxtags-deck'), 'ready');
     assert.deepEqual(readPublishedDeck(document), deckJson);
   });
+
+  it('ignores aborted XHR deck requests', async () => {
+    const { document, XMLHttpRequest } = createHarness({ xhrEvent: 'abort' });
+
+    const xhr = new XMLHttpRequest();
+    xhr.open('GET', DECK_URL);
+    xhr.send();
+    await flushAsync();
+
+    assert.equal(document.getElementById('moxtags-deck-json'), null);
+    assert.equal(document.documentElement.getAttribute('data-moxtags-deck'), null);
+  });
+
+  it('ignores invalid JSON XHR deck responses', async () => {
+    const { document, XMLHttpRequest } = createHarness({ xhrResponse: '<html>not json</html>' });
+
+    const xhr = new XMLHttpRequest();
+    xhr.open('GET', DECK_URL);
+    xhr.send();
+    await flushAsync();
+
+    assert.equal(document.getElementById('moxtags-deck-json'), null);
+    assert.equal(document.documentElement.getAttribute('data-moxtags-deck'), null);
+  });
 });
 
 describe('page_hook.js card lookup proxy', () => {
+  function dispatchCardLookup(window, cardId, requestId) {
+    const event = new window.Event('message');
+    event.data = {
+      type: 'moxtags-card-lookup',
+      cardId,
+      requestId,
+    };
+    window.dispatchEvent(event);
+  }
+
   it('proxies card lookup requests and posts normalized set/cn results', async () => {
     const { window, calls } = createHarness();
 
@@ -175,13 +256,7 @@ describe('page_hook.js card lookup proxy', () => {
       });
     });
 
-    const event = new window.Event('message');
-    event.data = {
-      type: 'moxtags-card-lookup',
-      cardId: 'vPo0V',
-      requestId: 'req-1',
-    };
-    window.dispatchEvent(event);
+    dispatchCardLookup(window, 'vPo0V', 'req-1');
 
     const result = await resultPromise;
 
@@ -209,13 +284,7 @@ describe('page_hook.js card lookup proxy', () => {
       });
     });
 
-    const event = new window.Event('message');
-    event.data = {
-      type: 'moxtags-card-lookup',
-      cardId: 'missing',
-      requestId: 'req-404',
-    };
-    window.dispatchEvent(event);
+    dispatchCardLookup(window, 'missing', 'req-404');
 
     const result = await resultPromise;
 
@@ -223,5 +292,75 @@ describe('page_hook.js card lookup proxy', () => {
     assert.equal(result.requestId, 'req-404');
     assert.equal(result.cardId, 'missing');
     assert.match(result.error, /HTTP 404/);
+  });
+
+  it('posts an error result when the proxied lookup fetch rejects', async () => {
+    const { window } = createHarness({
+      fetchImpl: async () => {
+        throw new Error('lookup network failure');
+      },
+    });
+
+    const resultPromise = new Promise(resolve => {
+      window.addEventListener('message', function handler(event) {
+        if (event.data?.type !== 'moxtags-card-result') return;
+        window.removeEventListener('message', handler);
+        resolve(event.data);
+      });
+    });
+
+    dispatchCardLookup(window, 'missing', 'req-reject');
+
+    const result = await resultPromise;
+    assert.equal(result.type, 'moxtags-card-result');
+    assert.equal(result.requestId, 'req-reject');
+    assert.equal(result.cardId, 'missing');
+    assert.match(result.error, /lookup network failure/);
+  });
+
+  it('handles concurrent proxied lookup requests independently', async () => {
+    const { window } = createHarness({
+      fetchImpl: async (input) => {
+        const url = typeof input === 'string' ? input : input.url;
+        const cardId = decodeURIComponent(url.split('/').pop());
+        if (cardId === 'slow') {
+          await new Promise(resolve => setTimeout(resolve, 5));
+          return new Response(JSON.stringify({ card: { set: 'SLO', cn: '10' } }), { status: 200 });
+        }
+        return new Response(JSON.stringify({ card: { set: 'FST', cn: '1' } }), { status: 200 });
+      },
+    });
+    const results = [];
+    const resultPromise = new Promise(resolve => {
+      window.addEventListener('message', (event) => {
+        if (event.data?.type !== 'moxtags-card-result') return;
+        results.push(event.data);
+        if (results.length === 2) resolve(results);
+      });
+    });
+
+    dispatchCardLookup(window, 'slow', 'req-slow');
+    dispatchCardLookup(window, 'fast', 'req-fast');
+
+    await resultPromise;
+    const byRequest = Object.fromEntries(results.map(result => [result.requestId, result]));
+    assert.equal(byRequest['req-slow'].cardId, 'slow');
+    assert.equal(byRequest['req-slow'].set, 'slo');
+    assert.equal(byRequest['req-slow'].cn, '10');
+    assert.equal(byRequest['req-fast'].cardId, 'fast');
+    assert.equal(byRequest['req-fast'].set, 'fst');
+    assert.equal(byRequest['req-fast'].cn, '1');
+  });
+
+  it('ignores unrelated postMessage events', async () => {
+    const { window, calls, postedMessages } = createHarness();
+
+    const event = new window.Event('message');
+    event.data = { type: 'unrelated-message', cardId: 'vPo0V', requestId: 'ignored' };
+    window.dispatchEvent(event);
+    await flushAsync();
+
+    assert.equal(calls.length, 0);
+    assert.deepEqual(postedMessages, []);
   });
 });

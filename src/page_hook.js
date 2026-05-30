@@ -9,6 +9,15 @@
   const TAG = '[MoxTags Hook]';
   const USER_AGENT = 'MoxTags/__MOXTAGS_VERSION__';
 
+  if (window.__MOXTAGS_PAGE_HOOK_INSTALLED__) {
+    console.log(TAG, 'Page hook already installed; skipping duplicate injection');
+    return;
+  }
+  Object.defineProperty(window, '__MOXTAGS_PAGE_HOOK_INSTALLED__', {
+    value: true,
+    configurable: true,
+  });
+
   // Regex matching Moxfield deck API URLs (v2 or v3).
   const DECK_API_RE = /\/v[23]\/decks\/all\/[A-Za-z0-9_-]+/;
 
