@@ -14,13 +14,16 @@
     "test:unit": "node --test tests/*.test.js",
     "test:build": "node build.js && node --test tests/build-smoke.test.js",
     "test:e2e": "node build.js && playwright test",
+    "test:e2e:firefox": "node build.js firefox && node --test tests/e2e/firefox-webdriver.test.js",
     "test:firefox-lint": "node build.js firefox && web-ext lint --source-dir dist/firefox"
   },
   "devDependencies": {
     "@playwright/test": "^1.60.0",
     "chrome-webstore-upload-cli": "^3.5.0",
     "esbuild": "^0.25.0",
+    "geckodriver": "^6.1.0",
     "linkedom": "^0.18.12",
+    "selenium-webdriver": "^4.44.0",
     "web-ext": "^10.1.0"
   }
 }

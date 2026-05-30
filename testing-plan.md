@@ -177,7 +177,7 @@ Beyond manifest checks, verify distributable artifacts:
 4. [x] Add Archidekt E2E.
 5. [x] Add Scryfall search-page E2E.
 6. [x] Deepen background and page-hook hostile timing tests.
-7. [ ] Add Firefox WebDriver E2E.
+7. [x] Add Firefox WebDriver E2E.
 8. [ ] Add release/package smoke tests.
 
 ## Current Assessment
