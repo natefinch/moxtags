@@ -11,6 +11,8 @@ const SEARCH_LONG_URL = 'https://www.moxfield.com/search/cards?q=e2e-long';
 const MOXFIELD_CARD_URL = 'https://www.moxfield.com/cards/vPo0V-e2e-test-card';
 const CARD_DETAILS_URL = 'https://api2.moxfield.com/v2/cards/details/vPo0V';
 const SCRYFALL_CARD_URL = 'https://scryfall.com/card/e2e/1/e2e-test-card';
+const ARCHIDEKT_DECK_URL = 'https://archidekt.com/decks/e2e-archidekt';
+const ARCHIDEKT_DECK_API_URL = 'https://archidekt.com/api/decks/e2e-archidekt/';
 const TEST_ORACLE_ID = '7404c078-228b-4296-bf1f-62f57bf832d9';
 const TEST_ILLUSTRATION_ID = '45859cfd-16b0-44d0-a2ff-2a9b1df5bccd';
 
@@ -24,6 +26,14 @@ const deckJson = {
         cn: '1',
       },
     },
+  },
+};
+
+const archidektDeckCardMap = {
+  e2eCard: {
+    name: 'E2E Test Card',
+    setCode: 'e2e',
+    collectorNumber: '1',
   },
 };
 
@@ -148,6 +158,102 @@ function cardPageFixtureHtml() {
     </html>`;
 }
 
+function archidektDeckFixtureHtml() {
+  const nextData = JSON.stringify({
+    props: {
+      pageProps: {
+        redux: {
+          deck: {
+            cardMap: archidektDeckCardMap,
+          },
+        },
+      },
+    },
+  });
+
+  return `<!doctype html>
+    <html>
+      <head>
+        <title>Archidekt E2E Deck Fixture</title>
+        <style>
+          button, img { display: inline-block; height: 24px; width: 120px; }
+          img { width: 80px; }
+        </style>
+        <script>
+          window.__lastSyntaxSearch = '';
+          window.__syntaxSearchSubmissions = [];
+
+          function installSyntaxSearchHandlers(root) {
+            const form = root.querySelector('form');
+            form.addEventListener('submit', event => {
+              event.preventDefault();
+              const input = form.querySelector('input[type="text"]');
+              window.__lastSyntaxSearch = input.value;
+              window.__syntaxSearchSubmissions.push(input.value);
+            });
+          }
+
+          window.__openArchidektSearchOverlay = function(initialQuery = '') {
+            let overlay = document.querySelector('[class*="globalOverlayStack_overlay"]');
+            if (overlay) {
+              const input = overlay.querySelector('input[type="text"]');
+              if (input && initialQuery !== undefined) input.value = initialQuery;
+              return overlay;
+            }
+
+            overlay = document.createElement('div');
+            overlay.className = 'globalOverlayStack_overlay__fixture';
+            overlay.innerHTML = \`
+              <div class="searchV2_container__fixture">
+                <button type="button" class="tabButtons_selected__fixture">Syntax search</button>
+                <form class="scryfallSearchForm_form__fixture">
+                  <div class="scryfallSearchForm_input__fixture">
+                    <input type="text" placeholder="color:red cmc:1">
+                  </div>
+                  <button type="submit">Search</button>
+                </form>
+              </div>\`;
+            document.body.appendChild(overlay);
+            const input = overlay.querySelector('input[type="text"]');
+            input.value = initialQuery;
+            installSyntaxSearchHandlers(overlay);
+            return overlay;
+          };
+
+          document.addEventListener('DOMContentLoaded', () => {
+            document.getElementById('archidekt-card-search').addEventListener('click', () => {
+              window.__openArchidektSearchOverlay('');
+            });
+          });
+        </script>
+      </head>
+      <body>
+        <button id="archidekt-card-search" type="button">Card Search</button>
+        <main>
+          <div class="deckCardWrapper_container__fixture basicCard_container__fixture" data-testid="archidekt-image-card">
+            <img data-testid="archidekt-card-img" alt="E2E Test Card (e2e) 1" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=">
+            <button data-testid="archidekt-image-menu" type="button">Image menu</button>
+          </div>
+          <div class="deckCardWrapper_container__fixture contextMenu_wrapper__fixture" data-testid="archidekt-stack-card">
+            <img alt="E2E Test Card (e2e) 1" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=">
+            <button data-testid="archidekt-stack-menu" type="button">Stack menu</button>
+          </div>
+          <div class="textViewCard_card__fixture" data-testid="archidekt-text-card">
+            <button class="textViewCard_button__fixture" data-testid="archidekt-text-menu" title="E2E Test Card" type="button">
+              <span class="textViewCard_cardName__fixture">E2E Test Card</span>
+            </button>
+          </div>
+          <div class="textViewCard_card__fixture" data-testid="archidekt-unknown-card">
+            <button class="textViewCard_button__fixture" data-testid="archidekt-unknown-menu" title="Unknown Text Card" type="button">
+              <span class="textViewCard_cardName__fixture">Unknown Text Card</span>
+            </button>
+          </div>
+        </main>
+        <script id="__NEXT_DATA__" type="application/json">${nextData}</script>
+      </body>
+    </html>`;
+}
+
 async function installDeterministicRoutes(context, counters) {
   await context.route('**/favicon.ico', route => route.fulfill({
     status: 204,
@@ -188,6 +294,21 @@ async function installDeterministicRoutes(context, counters) {
     contentType: 'text/html',
     body: cardPageFixtureHtml(),
   }));
+
+  await context.route(ARCHIDEKT_DECK_URL, route => route.fulfill({
+    status: 200,
+    contentType: 'text/html',
+    body: archidektDeckFixtureHtml(),
+  }));
+
+  await context.route(ARCHIDEKT_DECK_API_URL, route => {
+    counters.archidektDeckApi = (counters.archidektDeckApi || 0) + 1;
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ cardMap: archidektDeckCardMap }),
+    });
+  });
 
   await context.route('https://api2.moxfield.com/v2/decks/all/**', route => {
     counters.deckV2 += 1;
@@ -290,6 +411,14 @@ async function waitForDeckDataReady(page, consoleMessages) {
   ).toBe(true);
 }
 
+async function waitForArchidektReady(consoleMessages) {
+  await expect.poll(() =>
+    consoleMessages.some(text =>
+      text.includes('[MoxTags Archidekt] Initializing for Archidekt deck page')
+    )
+  ).toBe(true);
+}
+
 async function appendOwnedDeckContextMenu(page) {
   await page.evaluate(() => {
     const existing = document.querySelector('.dropdown-menu.show');
@@ -360,6 +489,71 @@ async function appendLongLayoutRow(page) {
       </div>`;
     document.getElementById('results').appendChild(row);
   });
+}
+
+async function openArchidektMenuFor(page, selector, menuClass) {
+  const target = page.locator(selector);
+  await target.dispatchEvent('pointerdown', { bubbles: true, button: 2 });
+  await target.dispatchEvent('contextmenu', { bubbles: true, button: 2 });
+  await page.evaluate((className) => {
+    document.getElementById('contextMenuOverlay')?.remove();
+    const overlay = document.createElement('div');
+    overlay.id = 'contextMenuOverlay';
+    const menu = document.createElement('div');
+    menu.className = className;
+    menu.innerHTML = `
+      <button class="archidekt-native-menu-button" type="button">Move to</button>
+      <button class="archidekt-native-menu-button" type="button">Edit categories</button>
+      <div class="menu_spacer__fixture"></div>
+      <div class="archidekt-menu-footer">Ctrl + Right Click for standard menu</div>`;
+    overlay.appendChild(menu);
+    document.body.appendChild(overlay);
+  }, menuClass);
+}
+
+async function appendArchidektDetailsOverlay(page) {
+  await page.evaluate(() => {
+    document.querySelector('[class*="cardDetailsOverlay_container"]')?.remove();
+    const overlay = document.createElement('div');
+    overlay.className = 'cardDetailsOverlay_container__fixture';
+    overlay.innerHTML = `
+      <img alt="E2E Test Card (e2e) 1" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=">
+      <h2 class="cardDetailsOverlay_title__fixture">E2E Test Card</h2>
+      <div class="cardInfo_extraInfo__fixture">
+        <div>Rarity: Rare</div>
+        <div>Legalities:</div>
+        <div>Commander: Legal</div>
+      </div>`;
+    document.body.appendChild(overlay);
+  });
+}
+
+async function appendArchidektSearchResult(page, initialQuery) {
+  await page.evaluate((query) => {
+    const overlay = window.__openArchidektSearchOverlay(query);
+    const container = overlay.querySelector('[class*="searchV2_container"]');
+    const result = document.createElement('div');
+    result.className = 'deckCardWrapper_container__fixture basicCard_container__fixture';
+    result.setAttribute('data-testid', 'archidekt-search-result-card');
+    result.innerHTML = `
+      <img data-testid="archidekt-search-result-img" alt="E2E Test Card (e2e) 1" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=">
+      <button data-testid="archidekt-search-result-menu" type="button">Result menu</button>`;
+    container.appendChild(result);
+  }, initialQuery);
+}
+
+async function expectArchidektMenuInjection(page, menuClass) {
+  const menu = page.locator(`#contextMenuOverlay [class*="${menuClass}"]`);
+  const injection = menu.locator('[data-moxtags-surface="archidekt-menu"]');
+  await expect(injection).toHaveCount(1, { timeout: 15_000 });
+  await expect(injection).toHaveAttribute('data-moxtags-card-key', 'e2e/1');
+  await expect(injection.locator('[data-moxtags-trigger="art-tags"]')).toHaveCount(1);
+  await expect(injection.locator('[data-moxtags-trigger="card-tags"]')).toHaveCount(1);
+  await expect(injection.locator('.moxtags-archidekt-tag-link', { hasText: 'art-tag' }))
+    .toHaveCount(1, { timeout: 15_000 });
+  await expect(injection.locator('.moxtags-archidekt-tag-link', { hasText: 'card-tag' }))
+    .toHaveCount(1, { timeout: 15_000 });
+  return injection;
 }
 
 test.describe('Playwright extension foundation', () => {
@@ -574,6 +768,128 @@ test.describe('Playwright extension foundation', () => {
       await expect(cardPageTags.locator('[data-moxtags-trigger="art-tags"]')).toHaveCount(1);
       await expect(cardPageTags.locator('.moxtags-moxfield-overlay-tag-link', { hasText: 'card-tag' })).toHaveCount(1);
       await expect(cardPageTags.locator('.moxtags-moxfield-overlay-tag-link', { hasText: 'art-tag' })).toHaveCount(1);
+    } finally {
+      networkGuard.assertNoEscapes();
+      await close();
+    }
+  });
+
+  test('injects Archidekt right-click menu tags and opens native Syntax Search', async () => {
+    const { context, close, counters, networkGuard } = await launchGuardedContext();
+    const page = await context.newPage();
+    const consoleMessages = [];
+    page.on('console', msg => consoleMessages.push(msg.text()));
+
+    try {
+      await page.goto(ARCHIDEKT_DECK_URL, { waitUntil: 'domcontentloaded' });
+      await waitForArchidektReady(consoleMessages);
+
+      await openArchidektMenuFor(page, '[data-testid="archidekt-card-img"]', 'deckCardContextMenu_contextMenu__fixture');
+
+      const injection = await expectArchidektMenuInjection(page, 'deckCardContextMenu_contextMenu');
+      await expect.poll(async () => page.evaluate(() => {
+        const injected = document.querySelector('#contextMenuOverlay [data-moxtags-surface="archidekt-menu"]');
+        const footer = [...document.querySelectorAll('#contextMenuOverlay [class*="deckCardContextMenu_contextMenu"] > *')]
+          .find(el => /Ctrl\s*\+\s*Right Click/i.test(el.textContent || ''));
+        return Boolean(injected && footer && (injected.compareDocumentPosition(footer) & Node.DOCUMENT_POSITION_FOLLOWING));
+      })).toBe(true);
+
+      await injection.locator('[data-moxtags-trigger="art-tags"]').hover();
+      await injection.locator('.moxtags-archidekt-tag-link', { hasText: 'art-tag' }).click();
+
+      await expect.poll(async () => page.evaluate(() => window.__lastSyntaxSearch))
+        .toBe('art:art-tag');
+      await expect(page.locator('[class*="globalOverlayStack_overlay"] input[type="text"]'))
+        .toHaveValue('art:art-tag');
+      expect(counters.archidektDeckApi).toBeGreaterThanOrEqual(1);
+    } finally {
+      networkGuard.assertNoEscapes();
+      await close();
+    }
+  });
+
+  test('injects Archidekt image and text menu variants without duplicates or name fallback', async () => {
+    const { context, close, networkGuard } = await launchGuardedContext();
+    const page = await context.newPage();
+    const consoleMessages = [];
+    page.on('console', msg => consoleMessages.push(msg.text()));
+
+    try {
+      await page.goto(ARCHIDEKT_DECK_URL, { waitUntil: 'domcontentloaded' });
+      await waitForArchidektReady(consoleMessages);
+
+      await openArchidektMenuFor(page, '[data-testid="archidekt-stack-menu"]', 'imageCard_extrasMenu__fixture');
+      await expectArchidektMenuInjection(page, 'imageCard_extrasMenu');
+      await page.evaluate(() => {
+        document.querySelector('#contextMenuOverlay [class*="imageCard_extrasMenu"]')
+          .setAttribute('data-rerender-probe', '1');
+      });
+      await expect(page.locator('#contextMenuOverlay [data-moxtags-surface="archidekt-menu"]')).toHaveCount(1);
+
+      await openArchidektMenuFor(page, '[data-testid="archidekt-text-menu"]', 'textViewCard_dropdown__fixture');
+      await expectArchidektMenuInjection(page, 'textViewCard_dropdown');
+
+      await openArchidektMenuFor(page, '[data-testid="archidekt-unknown-menu"]', 'textViewCard_dropdown__fixture');
+      await expect(page.locator('#contextMenuOverlay [data-moxtags-surface="archidekt-menu"]')).toHaveCount(0);
+    } finally {
+      networkGuard.assertNoEscapes();
+      await close();
+    }
+  });
+
+  test('injects Archidekt card details sections before Legalities', async () => {
+    const { context, close, networkGuard } = await launchGuardedContext();
+    const page = await context.newPage();
+    const consoleMessages = [];
+    page.on('console', msg => consoleMessages.push(msg.text()));
+
+    try {
+      await page.goto(ARCHIDEKT_DECK_URL, { waitUntil: 'domcontentloaded' });
+      await waitForArchidektReady(consoleMessages);
+      await appendArchidektDetailsOverlay(page);
+
+      const detailsTags = page.locator('[class*="cardInfo_extraInfo"] > [data-moxtags-surface="archidekt-details"]');
+      await expect(detailsTags).toHaveCount(1, { timeout: 15_000 });
+      await expect(detailsTags).toHaveAttribute('data-moxtags-card-key', 'e2e/1');
+      await expect(page.locator('[class*="cardInfo_extraInfo"] > [data-moxtags-surface="archidekt-details"] + div', { hasText: 'Legalities:' }))
+        .toHaveCount(1);
+      await expect(detailsTags.locator('[data-moxtags-section="card-tags"]')).toHaveCount(1);
+      await expect(detailsTags.locator('[data-moxtags-section="art-tags"]')).toHaveCount(1);
+      await expect(detailsTags.locator('[data-moxtags-trigger="card-tags"]')).toHaveCount(1);
+      await expect(detailsTags.locator('[data-moxtags-trigger="art-tags"]')).toHaveCount(1);
+      await expect(detailsTags.locator('.moxtags-archidekt-details-tag-link', { hasText: 'card-tag' }))
+        .toHaveCount(1, { timeout: 15_000 });
+      await expect(detailsTags.locator('.moxtags-archidekt-details-tag-link', { hasText: 'art-tag' }))
+        .toHaveCount(1, { timeout: 15_000 });
+    } finally {
+      networkGuard.assertNoEscapes();
+      await close();
+    }
+  });
+
+  test('appends Archidekt search-result tag queries without duplicate tokens', async () => {
+    const { context, close, networkGuard } = await launchGuardedContext();
+    const page = await context.newPage();
+    const consoleMessages = [];
+    page.on('console', msg => consoleMessages.push(msg.text()));
+
+    try {
+      await page.goto(ARCHIDEKT_DECK_URL, { waitUntil: 'domcontentloaded' });
+      await waitForArchidektReady(consoleMessages);
+      await appendArchidektSearchResult(page, 'type:creature art:art-tag');
+
+      await openArchidektMenuFor(page, '[data-testid="archidekt-search-result-img"]', 'deckCardContextMenu_contextMenu__fixture');
+      const injection = await expectArchidektMenuInjection(page, 'deckCardContextMenu_contextMenu');
+
+      await injection.locator('[data-moxtags-trigger="art-tags"]').hover();
+      await injection.locator('.moxtags-archidekt-tag-link', { hasText: 'art-tag' }).click();
+      await expect.poll(async () => page.evaluate(() => window.__lastSyntaxSearch))
+        .toBe('type:creature art:art-tag');
+
+      await injection.locator('[data-moxtags-trigger="card-tags"]').hover();
+      await injection.locator('.moxtags-archidekt-tag-link', { hasText: 'card-tag' }).click();
+      await expect.poll(async () => page.evaluate(() => window.__lastSyntaxSearch))
+        .toBe('type:creature art:art-tag otag:card-tag');
     } finally {
       networkGuard.assertNoEscapes();
       await close();

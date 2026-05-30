@@ -174,7 +174,7 @@ Beyond manifest checks, verify distributable artifacts:
 1. [x] Add network escape detection to the existing Playwright fixture.
 2. [x] Expand Moxfield E2E to public deck, search results, long layout, and card page.
 3. [x] Add systematic `data-moxtags-*` selectors for the surfaces under test.
-4. [ ] Add Archidekt E2E.
+4. [x] Add Archidekt E2E.
 5. [ ] Add Scryfall search-page E2E.
 6. [ ] Deepen background and page-hook hostile timing tests.
 7. [ ] Add Firefox WebDriver E2E.
