@@ -11,6 +11,7 @@ All functions use **dependency injection** for external state (card maps, loggin
 | File | Purpose |
 |------|---------|
 | `card.js` | Parse Moxfield card IDs from `/cards/{id}-{slug}` hrefs |
+| `cardpage.js` | Extract card identity and find insertion points on standalone card pages |
 | `deck.js` | Build card lookup maps from Moxfield deck JSON |
 | `longlayout.js` | Detect and extract card info from search-results "long" layout |
 | `constants.js` | Moxfield-specific constants (board names, menu keywords) |
@@ -25,6 +26,14 @@ All functions use **dependency injection** for external state (card maps, loggin
 
 - **`parseCardIdFromHref(href)`** → `string | null`
   Extracts a Moxfield card ID from a `/cards/...` href.
+
+### cardpage.js
+
+- **`extractCardPageInfo(pathname, container)`** → `{ name, moxCardId, set, cn }`
+  Extracts card identity from a standalone card page URL and DOM.
+
+- **`findFormatLegalitiesHeading(container)`** → `Element | null`
+  Finds the `<h3>Format Legalities</h3>` heading on a card page.
 
 ### deck.js
 
@@ -99,3 +108,24 @@ const { cardMap } = buildCardMap(deckJson, console.log);
 const cardName = identifyCard(clickedElement, cardMap);
 const menu = findSmallestMenu(portalRoot, MENU_KEYWORDS);
 ```
+
+## React rendering timing
+
+Moxfield is a React SPA. Content scripts run at `document_idle`, but React
+typically has **not** finished rendering page content by that point. The initial
+HTML contains the shell (`<main>`, `<header>`, etc.) while card details,
+legalities, menus, and other dynamic content are rendered asynchronously by
+React after the JS bundles load.
+
+**Never assume page content is available at init time.** Always use one (or
+both) of these strategies:
+
+1. **MutationObserver** — watch for the target element to appear in the DOM.
+   This is the primary approach used by all scan functions (`scanForMenu`,
+   `scanForCardOverlay`, `scanForCardPageContent`, etc.).
+2. **Retry timer** — as a fallback, schedule a `setTimeout` retry. Guard the
+   retry with a `pageType` check so stale retries from a previous SPA
+   navigation are discarded.
+
+Calling a function once from `init()` without observer backup will silently
+fail on most pages because the content simply isn't there yet.

@@ -5,7 +5,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseHTML } from 'linkedom';
 
-import { findUnprocessedMoreOptionsButtons, extractCardInfoFromRow } from '../src/moxfield/longlayout.js';
+import { findUnprocessedMoreOptionsButtons, findUnprocessedCardSearchRows, extractCardInfoFromRow } from '../src/moxfield/longlayout.js';
 
 /**
  * Build a minimal long-layout card row matching the Moxfield DOM structure.
@@ -208,5 +208,119 @@ describe('extractCardInfoFromRow', () => {
     const info = extractCardInfoFromRow(row);
     assert.equal(info.moxCardId, 'vPZda');
     assert.equal(info.cardName, 'Aang, Air Nomad');
+  });
+});
+
+// ─── Card search text layout helpers ─────────────────────────────────
+
+/**
+ * Build a card search text-layout row (uses "Add to Wish List" instead
+ * of "More Options").
+ */
+function buildCardSearchRow(doc, { cardId = 'j43RR', slug = 'ajani-outland-chaperone', cardName = 'Ajani, Outland Chaperone' } = {}) {
+  const row = doc.createElement('div');
+  row.className = 'row justify-content-center';
+
+  // Image column.
+  const imgCol = doc.createElement('div');
+  imgCol.className = 'col-12 col-md-auto text-center mb-3';
+  const imgLink = doc.createElement('a');
+  imgLink.href = `/cards/${cardId}-${slug}`;
+  const img = doc.createElement('img');
+  img.alt = cardName;
+  img.className = 'img-card img-fluid cursor-pointer';
+  imgLink.appendChild(img);
+  imgCol.appendChild(imgLink);
+  row.appendChild(imgCol);
+
+  // Details column.
+  const detCol = doc.createElement('div');
+  detCol.className = 'col-12 col-md';
+  const h3 = doc.createElement('h3');
+  const nameLink = doc.createElement('a');
+  nameLink.href = `/cards/${cardId}-${slug}`;
+  nameLink.textContent = cardName;
+  h3.appendChild(nameLink);
+  detCol.appendChild(h3);
+  row.appendChild(detCol);
+
+  // Button column.
+  const btnCol = doc.createElement('div');
+  btnCol.className = 'col-9 col-sm-7 col-md-3 px-5 px-md-3';
+  const btnContainer = doc.createElement('div');
+  btnContainer.className = 'd-flex flex-column gap-2 mt-3 mt-sm-5';
+
+  for (const label of ['Create Deck with...', 'Add to Deck', 'Add to Package', 'Add to Wish List']) {
+    const btn = doc.createElement('button');
+    btn.className = 'btn w-100 btn-secondary';
+    const span = doc.createElement('span');
+    span.textContent = label;
+    btn.appendChild(span);
+    btnContainer.appendChild(btn);
+  }
+
+  btnCol.appendChild(btnContainer);
+  row.appendChild(btnCol);
+  return row;
+}
+
+describe('findUnprocessedCardSearchRows', () => {
+  it('finds card search text rows with Add to Wish List', () => {
+    const { document: doc } = parseHTML('<!DOCTYPE html><html><body></body></html>');
+    const row = buildCardSearchRow(doc);
+    doc.body.appendChild(row);
+
+    const results = findUnprocessedCardSearchRows(row);
+    assert.equal(results.length, 1);
+    assert.ok(results[0].button.textContent.includes('Add to Wish List'));
+    assert.equal(results[0].row, row);
+  });
+
+  it('finds multiple card search rows', () => {
+    const { document: doc } = parseHTML('<!DOCTYPE html><html><body></body></html>');
+    const container = doc.createElement('div');
+    container.appendChild(buildCardSearchRow(doc, { cardId: 'aaa', cardName: 'Card A' }));
+    container.appendChild(buildCardSearchRow(doc, { cardId: 'bbb', cardName: 'Card B' }));
+    doc.body.appendChild(container);
+
+    const results = findUnprocessedCardSearchRows(container);
+    assert.equal(results.length, 2);
+  });
+
+  it('skips already-processed rows', () => {
+    const { document: doc } = parseHTML('<!DOCTYPE html><html><body></body></html>');
+    const row = buildCardSearchRow(doc);
+    doc.body.appendChild(row);
+
+    const btnContainer = row.querySelector('.d-flex');
+    const marker = doc.createElement('div');
+    marker.className = 'moxtags-long-btn-wrapper';
+    btnContainer.appendChild(marker);
+
+    const results = findUnprocessedCardSearchRows(row);
+    assert.equal(results.length, 0);
+  });
+
+  it('does not match deck long-layout rows that have More Options', () => {
+    const { document: doc } = parseHTML('<!DOCTYPE html><html><body></body></html>');
+    // buildCardRow creates a deck-style row with "More Options" button.
+    const row = buildCardRow(doc);
+    doc.body.appendChild(row);
+
+    const results = findUnprocessedCardSearchRows(row);
+    assert.equal(results.length, 0);
+  });
+
+  it('does not match rows without card images or card links', () => {
+    const { document: doc } = parseHTML('<!DOCTYPE html><html><body></body></html>');
+    const row = doc.createElement('div');
+    row.className = 'row';
+    const btn = doc.createElement('button');
+    btn.textContent = 'Add to Wish List';
+    row.appendChild(btn);
+    doc.body.appendChild(row);
+
+    const results = findUnprocessedCardSearchRows(row);
+    assert.equal(results.length, 0);
   });
 });

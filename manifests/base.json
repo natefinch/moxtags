@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "MoxTags",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "author": "Nate Finch",
   "homepage_url": "https://github.com/natefinch/moxtags",
   "description": "Adds Scryfall Tagger card and art tag menus, tag panels, search helpers, and autocomplete to Moxfield, Scryfall, and Archidekt.",
@@ -25,7 +25,11 @@
     {
       "matches": [
         "https://moxfield.com/decks/*",
-        "https://www.moxfield.com/decks/*"
+        "https://www.moxfield.com/decks/*",
+        "https://moxfield.com/search/*",
+        "https://www.moxfield.com/search/*",
+        "https://moxfield.com/cards/*",
+        "https://www.moxfield.com/cards/*"
       ],
       "js": [
         "page_hook.js"
@@ -36,7 +40,11 @@
     {
       "matches": [
         "https://moxfield.com/decks/*",
-        "https://www.moxfield.com/decks/*"
+        "https://www.moxfield.com/decks/*",
+        "https://moxfield.com/search/*",
+        "https://www.moxfield.com/search/*",
+        "https://moxfield.com/cards/*",
+        "https://www.moxfield.com/cards/*"
       ],
       "js": [
         "content.js"

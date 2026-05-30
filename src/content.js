@@ -3,7 +3,8 @@
 
 import { buildCardMap } from './moxfield/deck.js';
 import { parseCardIdFromHref } from './moxfield/card.js';
-import { findUnprocessedMoreOptionsButtons, extractCardInfoFromRow } from './moxfield/longlayout.js';
+import { findUnprocessedMoreOptionsButtons, findUnprocessedCardSearchRows, extractCardInfoFromRow } from './moxfield/longlayout.js';
+import { extractCardPageInfo, findFormatLegalitiesHeading } from './moxfield/cardpage.js';
 import { extractCardOverlayInfo, findLegalityGrid } from './moxfield/overlay.js';
 import { MENU_KEYWORDS } from './moxfield/constants.js';
 import {
@@ -37,6 +38,7 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
   // ─── State ──────────────────────────────────────────────────────────
   let deckId = null;
   let deckUrl = null;
+  let pageType = null;    // 'deck' | 'cardSearch' | 'cardPage'
   let cardMap = new Map();   // lowercase card name → { name, set, cn }
   let tagCache = new Map();  // "set/cn" → { artTags: [], cardTags: [] }
   let currentCard = null;    // info object of most-recently-clicked card
@@ -74,15 +76,22 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
   init();
 
   function init() {
-    deckId = extractDeckId();
-    if (!deckId) {
-      log('Not a deck page, skipping init');
+    pageType = getPageType();
+    if (!pageType) {
+      log('Not a supported page, skipping init');
       return;
     }
-    deckUrl = location.origin + '/decks/' + deckId;
-    log('Initializing for deck', deckId, 'at', deckUrl);
 
-    fetchDeckData();
+    if (pageType === 'deck') {
+      deckId = extractDeckId();
+      deckUrl = location.origin + '/decks/' + deckId;
+      log('Initializing for deck', deckId, 'at', deckUrl);
+      fetchDeckData();
+    } else if (pageType === 'cardSearch') {
+      log('Initializing for card search page');
+    } else if (pageType === 'cardPage') {
+      log('Initializing for card page');
+    }
 
     // Track which card row the user clicked on.
     document.addEventListener('mousedown', onMouseDown, true);
@@ -96,11 +105,23 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
       attributeFilter: ['class', 'style', 'aria-hidden', 'hidden', 'href', 'src'],
     });
 
-    // Re-init when the SPA navigates to a different deck.
+    // Re-init when the SPA navigates to a different page.
     watchNavigation();
 
     // Set up search box autocomplete for tag names.
     setupAutocomplete();
+
+    // On card pages, inject tags into the page content immediately.
+    if (pageType === 'cardPage') {
+      injectTagsIntoCardPage();
+    }
+  }
+
+  function getPageType() {
+    if (extractDeckId()) return 'deck';
+    if (/^\/search(\/|$)/.test(location.pathname)) return 'cardSearch';
+    if (/^\/cards\//.test(location.pathname)) return 'cardPage';
+    return null;
   }
 
   function cleanup() {
@@ -112,6 +133,9 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
     currentCard = null;
     lastOptionsCard = null;
     searchTagsOnScryfall = false;
+    pageType = null;
+    deckId = null;
+    deckUrl = null;
     detachAutocomplete();
 
     // Remove stale page_hook data from a previous deck so the next
@@ -123,6 +147,10 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
     }
     document.documentElement.removeAttribute('data-moxtags-deck');
     log('cleanup: removed data-moxtags-deck attribute');
+
+    // Remove any card-page tag sections injected into the page content.
+    document.querySelectorAll('.moxtags-moxfield-overlay-tags').forEach(el => el.remove());
+    document.querySelectorAll('.moxtags-moxfield-overlay-divider').forEach(el => el.remove());
   }
 
   function extractDeckId() {
@@ -245,6 +273,20 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
         log('Card name found but not in cardMap:', name);
       }
     }
+
+    // On non-deck pages (no cardMap), try to identify the card from the
+    // nearest .decklist-card container so dropdown injection has context.
+    if (!currentCard && cardMap.size === 0) {
+      const card = e.target.closest?.('.decklist-card');
+      if (card) {
+        const info = extractCardInfoFromSearchResultCard(card);
+        if (info) {
+          currentCard = info;
+          lastOptionsCard = null;
+          log('Card context set (from decklist-card) →', info.name || info.moxCardId);
+        }
+      }
+    }
     pollForCardPreviewPanel();
   }
 
@@ -271,6 +313,7 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
         scanForCardOverlay(node);
         scanForCardDropdown(node);
         scanForLongLayout(node);
+        scanForCardPageContent(node);
       }
       // Also check attribute changes – menus may be shown/hidden via style.
       if (mut.type === 'attributes' && mut.target?.nodeType === Node.ELEMENT_NODE) {
@@ -525,16 +568,25 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
 
   // ─── Long layout detection & injection ──────────────────────────────
   // Search results "long" layout: each card is a full-width row with
-  // action buttons in a side column (Add to Main Deck, More Options, …).
-  // The standard dropdown-menu injection doesn't apply, so we add
-  // standalone "Art Tags" / "Card Tags" buttons after "More Options".
+  // action buttons in a side column. Two variants:
+  //   - Deck search: ends with "More Options" button
+  //   - Card search: ends with "Add to Wish List" button
+  // We add standalone "Art Tags" / "Card Tags" buttons after the last button.
 
   function scanForLongLayout(el) {
-    const results = findUnprocessedMoreOptionsButtons(el);
-    if (results.length > 0) {
-      log('scanForLongLayout: found', results.length, 'unprocessed More Options buttons');
+    const moreOpts = findUnprocessedMoreOptionsButtons(el);
+    if (moreOpts.length > 0) {
+      log('scanForLongLayout: found', moreOpts.length, 'unprocessed More Options buttons');
     }
-    for (const { button, row } of results) {
+    for (const { button, row } of moreOpts) {
+      injectLongLayoutButtons(button, row);
+    }
+
+    const searchRows = findUnprocessedCardSearchRows(el);
+    if (searchRows.length > 0) {
+      log('scanForLongLayout: found', searchRows.length, 'unprocessed card search text rows');
+    }
+    for (const { button, row } of searchRows) {
       injectLongLayoutButtons(button, row);
     }
   }
@@ -593,6 +645,19 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
       }
 
       menu.classList.add('show');
+
+      // Close the menu when the user clicks anywhere outside it.
+      // Use a one-time listener registered after a microtask so it
+      // doesn't immediately catch the current click.
+      setTimeout(() => {
+        function closeOnOutsideClick(ev) {
+          if (!container.contains(ev.target)) {
+            menu.classList.remove('show');
+            document.removeEventListener('mousedown', closeOnOutsideClick, true);
+          }
+        }
+        document.addEventListener('mousedown', closeOnOutsideClick, true);
+      }, 0);
 
       if (loaded) return;
       loaded = true;
@@ -680,14 +745,8 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
     return container;
   }
 
-  // Single delegated listener to close long-layout menus on outside clicks.
-  document.addEventListener('click', (e) => {
-    for (const menu of document.querySelectorAll('.moxtags-long-menu.show')) {
-      if (!menu.parentElement?.contains(e.target)) {
-        menu.classList.remove('show');
-      }
-    }
-  });
+  // Long-layout menus are closed by per-menu one-time mousedown handlers
+  // registered when each menu opens (see buildLongLayoutTagButton).
 
   function renderLongMenuTags(menu, tags, searchPrefix) {
     const searchBtn = document.createElement('button');
@@ -1473,6 +1532,71 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
     return shouldSearchTagsOnScryfall() ? 'Search Scryfall' : 'Search by tags';
   }
 
+  // ─── Standalone card page tag injection ─────────────────────────────
+  // Card pages (/cards/{id}-slug) show a single card with set info,
+  // legalities, rulings, etc.  Inject tag sections above "Format
+  // Legalities", reusing the same overlay-style rendering.
+
+  function scanForCardPageContent(el) {
+    if (pageType !== 'cardPage') return;
+    // Check if the new node (or its subtree) contains the legalities heading.
+    const container = document.querySelector('main') || document.body;
+    if (container.querySelector('.moxtags-moxfield-overlay-tags')) return;
+    const heading = findFormatLegalitiesHeading(el) || findFormatLegalitiesHeading(container);
+    if (heading) {
+      injectTagsIntoCardPage();
+    }
+  }
+
+  async function injectTagsIntoCardPage() {
+    const container = document.querySelector('main') || document.body;
+    if (container.querySelector('.moxtags-moxfield-overlay-tags')) return;
+
+    const heading = findFormatLegalitiesHeading(container);
+    const legalityGrid = findLegalityGrid(container);
+    const insertBefore = heading || legalityGrid;
+    if (!insertBefore) {
+      log('Card page: legalities section not found, retrying…');
+      // SPA may still be rendering — retry once after a short delay.
+      const retryPageType = pageType;
+      setTimeout(() => {
+        if (pageType === retryPageType) injectTagsIntoCardPage();
+      }, 1000);
+      return;
+    }
+
+    const identity = extractCardPageInfo(location.pathname, container);
+    if (!identity.name && !identity.moxCardId) {
+      log('Card page: could not extract card identity');
+      return;
+    }
+    log('Card page: identity →', identity.name, identity.set, identity.cn, identity.moxCardId);
+
+    const wrapper = document.createElement('div');
+    wrapper.className = 'moxtags-moxfield-overlay-tags';
+
+    const loader = document.createElement('p');
+    loader.className = 'moxtags-moxfield-overlay-message text-muted';
+    loader.textContent = 'Loading Scryfall tags…';
+    wrapper.appendChild(loader);
+
+    const divider = document.createElement('hr');
+    divider.className = 'my-4 moxtags-moxfield-overlay-divider';
+
+    // Insert before the heading (or legality grid), with a divider between.
+    insertBefore.before(wrapper, divider);
+
+    try {
+      const tags = await loadTagsForOverlay(identity);
+      wrapper.innerHTML = '';
+      renderCardOverlayTags(wrapper, tags);
+    } catch (err) {
+      error('Card page tag fetch failed:', err);
+      loader.textContent = err.cacheLoading ? 'Downloading tag data…' : 'Failed to load tags';
+      loader.classList.add('moxtags-error');
+    }
+  }
+
   // ─── Change Tags dialog injection ──────────────────────────────────
   // When the user opens Moxfield's "Change Tags" dialog (Shift+Click),
   // inject <select> dropdowns for this card's Scryfall art and card tags.
@@ -1737,8 +1861,10 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
   }
 
   // ─── SPA navigation ───────────────────────────────────────────────
+  let navWatcherId = null;
   function watchNavigation() {
-    setInterval(() => {
+    if (navWatcherId) return; // already watching
+    navWatcherId = setInterval(() => {
       if (location.href !== lastUrl) {
         lastUrl = location.href;
         log('URL changed – reinitializing');

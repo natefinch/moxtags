@@ -57,7 +57,7 @@ function documentOrderIndex(scope, node) {
   return all.indexOf(node);
 }
 
-function parseSetCodeFromSearchHref(href) {
+export function parseSetCodeFromSearchHref(href) {
   if (!href || typeof href !== 'string') return null;
   const url = new URL(href, 'https://moxfield.com');
   const q = url.searchParams.get('q') || '';
@@ -65,7 +65,7 @@ function parseSetCodeFromSearchHref(href) {
   return match?.[1]?.toLowerCase() || null;
 }
 
-function extractCollectorNumberNearSetLink(setLink) {
+export function extractCollectorNumberNearSetLink(setLink) {
   if (!setLink) return null;
   const row = setLink.closest?.('.d-flex') || setLink.parentElement;
   const text = row?.textContent || '';
