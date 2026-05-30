@@ -162,12 +162,13 @@ describe('Moxfield example HTML fixtures', () => {
     const owned = parseExampleHtml('moxfield-mydeck.html').document;
     const otherUser = parseExampleHtml('modefield-other-deck.html').document;
 
+    // Owned decks should NOT return preview panels (tags go in the context menu).
     const ownedPanels = findCardPreviewActionPanels(owned.body);
-    const otherPanels = findCardPreviewActionPanels(otherUser.body);
+    assert.equal(ownedPanels.length, 0);
 
-    assert.equal(ownedPanels.length, 1);
+    // Public (other-user) decks should return the preview panel.
+    const otherPanels = findCardPreviewActionPanels(otherUser.body);
     assert.equal(otherPanels.length, 1);
-    assert.equal(extractCardIdFromCardPreviewPanel(ownedPanels[0]), '8RKDA');
     assert.equal(extractCardIdFromCardPreviewPanel(otherPanels[0]), 'VB1O3');
   });
 });

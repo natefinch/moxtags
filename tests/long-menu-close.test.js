@@ -1,20 +1,21 @@
-// Tests for long-layout tag menu open/close behavior.
-// Verifies that clicking outside an open menu closes it.
+// Tests for the extracted installMenuToggle function (shared/menu-toggle.js).
+// Tests the ACTUAL source code instead of a reimplemented copy.
 // Run with: node --test tests/long-menu-close.test.js
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseHTML } from 'linkedom';
 
+import { installMenuToggle } from '../src/shared/menu-toggle.js';
+
 /**
- * Build a minimal long-layout menu structure matching what
- * buildLongLayoutTagButton creates at runtime.
+ * Build a minimal DOM fixture and install the menu toggle via the
+ * actual source function, then return references for assertions.
  */
 function buildMenuFixture() {
   const { document: doc } = parseHTML('<!DOCTYPE html><html><body></body></html>');
   const EventCtor = doc.defaultView.Event;
 
-  // The "container" holds the toggle button and the dropdown menu.
   const container = doc.createElement('div');
   container.className = 'moxtags-long-tag-container mt-2';
 
@@ -28,7 +29,6 @@ function buildMenuFixture() {
   menu.className = 'dropdown-menu moxtags-long-menu';
   container.appendChild(menu);
 
-  // Something outside the container to click on.
   const outside = doc.createElement('div');
   outside.className = 'page-content';
   outside.textContent = 'other content';
@@ -36,70 +36,58 @@ function buildMenuFixture() {
   doc.body.appendChild(container);
   doc.body.appendChild(outside);
 
-  // Wire up the close-on-outside-click handler the same way content.js does.
-  btn.addEventListener('click', (e) => {
-    e.stopPropagation();
+  const callbacks = { openCount: 0, closeCount: 0 };
 
-    // Close other open menus.
-    doc.querySelectorAll('.moxtags-long-menu.show').forEach(m => {
-      if (m !== menu) m.classList.remove('show');
-    });
-
-    if (menu.classList.contains('show')) {
-      menu.classList.remove('show');
-      return;
-    }
-
-    menu.classList.add('show');
-
-    // Register a one-time close handler after a microtask.
-    setTimeout(() => {
-      function closeOnOutsideClick(ev) {
-        if (!container.contains(ev.target)) {
-          menu.classList.remove('show');
-          doc.removeEventListener('mousedown', closeOnOutsideClick, true);
-        }
-      }
-      doc.addEventListener('mousedown', closeOnOutsideClick, true);
-    }, 0);
+  // Install the ACTUAL toggle handler from source.
+  installMenuToggle({
+    button: btn,
+    menu,
+    container,
+    document: doc,
+    onOpen: () => callbacks.openCount++,
+    onClose: () => callbacks.closeCount++,
   });
 
-  return { doc, EventCtor, container, btn, menu, outside };
+  return { doc, EventCtor, container, btn, menu, outside, callbacks };
 }
 
-describe('long-layout tag menu close behavior', () => {
-  it('opens the menu when the button is clicked', async () => {
-    const { btn, menu } = buildMenuFixture();
+describe('installMenuToggle', () => {
+  it('opens the menu when the button is clicked', () => {
+    const { btn, menu, callbacks } = buildMenuFixture();
 
     btn.click();
+
     assert.ok(menu.classList.contains('show'), 'menu should be open after button click');
+    assert.equal(callbacks.openCount, 1, 'onOpen should fire once');
   });
 
-  it('closes the menu when the button is clicked again', async () => {
-    const { btn, menu } = buildMenuFixture();
+  it('closes the menu when the button is clicked again (toggle)', () => {
+    const { btn, menu, callbacks } = buildMenuFixture();
 
     btn.click();
     assert.ok(menu.classList.contains('show'));
 
     btn.click();
     assert.ok(!menu.classList.contains('show'), 'menu should close on second click');
+    assert.equal(callbacks.closeCount, 1, 'onClose should fire once');
   });
 
-  it('closes the menu when clicking outside', async () => {
-    const { EventCtor, btn, menu, outside } = buildMenuFixture();
+  it('closes the menu when clicking outside the container', async () => {
+    const { EventCtor, btn, menu, outside, callbacks } = buildMenuFixture();
 
     btn.click();
     assert.ok(menu.classList.contains('show'));
 
+    // Wait for the setTimeout(0) that registers the outside-click handler.
     await new Promise(r => setTimeout(r, 10));
 
-    // Simulate clicking outside.
     outside.dispatchEvent(new EventCtor('mousedown', { bubbles: true }));
 
     assert.ok(!menu.classList.contains('show'), 'menu should close on outside click');
+    assert.equal(callbacks.closeCount, 1);
   });
 
-  it('does NOT close the menu when clicking inside it', async () => {
+  it('does NOT close the menu when clicking inside the container', async () => {
     const { EventCtor, btn, menu } = buildMenuFixture();
 
     const item = menu.ownerDocument.createElement('div');
@@ -111,26 +99,75 @@ describe('long-layout tag menu close behavior', () => {
 
     await new Promise(r => setTimeout(r, 10));
 
-    // Click inside the menu.
     item.dispatchEvent(new EventCtor('mousedown', { bubbles: true }));
 
     assert.ok(menu.classList.contains('show'), 'menu should stay open on inside click');
   });
 
-  it('removes the one-time handler after closing', async () => {
-    const { EventCtor, btn, menu, outside } = buildMenuFixture();
+  it('removes the one-time handler after closing, allowing re-open', async () => {
+    const { EventCtor, btn, menu, outside, callbacks } = buildMenuFixture();
 
     btn.click();
     assert.ok(menu.classList.contains('show'));
 
     await new Promise(r => setTimeout(r, 10));
 
-    // Close it.
+    // Close via outside click.
     outside.dispatchEvent(new EventCtor('mousedown', { bubbles: true }));
     assert.ok(!menu.classList.contains('show'));
 
-    // Re-open it.
+    // Re-open.
     btn.click();
     assert.ok(menu.classList.contains('show'), 'menu should re-open');
+    assert.equal(callbacks.openCount, 2, 'onOpen should fire again on re-open');
+  });
+
+  it('closes other open menus when a new one opens', () => {
+    const { doc, btn, menu } = buildMenuFixture();
+
+    // Create a second menu that is already open.
+    const otherMenu = doc.createElement('div');
+    otherMenu.className = 'dropdown-menu moxtags-long-menu show';
+    doc.body.appendChild(otherMenu);
+
+    btn.click();
+
+    assert.ok(menu.classList.contains('show'), 'new menu should open');
+    assert.ok(!otherMenu.classList.contains('show'), 'other menu should close');
+  });
+
+  it('does not register duplicate outside-click handlers on rapid clicks', async () => {
+    const { btn, menu, outside, EventCtor, callbacks } = buildMenuFixture();
+
+    // Open.
+    btn.click();
+    assert.ok(menu.classList.contains('show'));
+
+    // Close immediately (before setTimeout fires).
+    btn.click();
+    assert.ok(!menu.classList.contains('show'));
+
+    // Open again.
+    btn.click();
+    assert.ok(menu.classList.contains('show'));
+
+    // Let all setTimeout(0) handlers run.
+    await new Promise(r => setTimeout(r, 20));
+
+    // Single outside click should close once, not multiple times.
+    outside.dispatchEvent(new EventCtor('mousedown', { bubbles: true }));
+    assert.ok(!menu.classList.contains('show'));
+  });
+
+  it('stopPropagation prevents the click from bubbling up', () => {
+    const { doc, btn, menu } = buildMenuFixture();
+
+    let bodyClicked = false;
+    doc.body.addEventListener('click', () => { bodyClicked = true; });
+
+    btn.click();
+
+    assert.ok(menu.classList.contains('show'));
+    assert.equal(bodyClicked, false, 'click should not bubble past the button');
   });
 });

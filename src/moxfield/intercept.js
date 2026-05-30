@@ -14,9 +14,10 @@
  */
 export function readInterceptedDeck(options = {}) {
   const elementId = options.elementId || 'moxtags-deck-json';
+  const doc = options.document ?? document;
   const log = options.logFn || (() => {});
 
-  const el = document.getElementById(elementId);
+  const el = doc.getElementById(elementId);
   log('readInterceptedDeck: element found:', !!el);
   if (!el) return null;
   const text = el.textContent;
@@ -48,44 +49,46 @@ export function waitForInterceptedDeck(options = {}) {
   const elementId = options.elementId || 'moxtags-deck-json';
   const attrName = options.attrName || 'data-moxtags-deck';
   const timeoutMs = options.timeoutMs || 12000;
+  const doc = options.document ?? document;
   const log = options.logFn || (() => {});
 
   return new Promise((resolve) => {
-    const attrVal = document.documentElement.getAttribute(attrName);
+    const attrVal = doc.documentElement.getAttribute(attrName);
     log('waitForInterceptedDeck: current attr value:', JSON.stringify(attrVal));
 
     if (attrVal === 'ready') {
       log('waitForInterceptedDeck: data already ready, reading now');
-      return resolve(readInterceptedDeck({ elementId, logFn: log }));
+      return resolve(readInterceptedDeck({ elementId, document: doc, logFn: log }));
     }
 
+    const ObserverClass = options.MutationObserver ?? MutationObserver;
     log('waitForInterceptedDeck: setting up MutationObserver, timeout:', timeoutMs, 'ms');
-    const obs = new MutationObserver((mutations) => {
+    const obs = new ObserverClass((mutations) => {
       for (const m of mutations) {
         log('waitForInterceptedDeck: mutation detected –',
-          m.attributeName, '=', document.documentElement.getAttribute(m.attributeName));
+          m.attributeName, '=', doc.documentElement.getAttribute(m.attributeName));
       }
-      if (document.documentElement.getAttribute(attrName) === 'ready') {
+      if (doc.documentElement.getAttribute(attrName) === 'ready') {
         log('waitForInterceptedDeck: ready signal received via MutationObserver');
         obs.disconnect();
         clearTimeout(timer);
-        resolve(readInterceptedDeck({ elementId, logFn: log }));
+        resolve(readInterceptedDeck({ elementId, document: doc, logFn: log }));
       }
     });
-    obs.observe(document.documentElement, {
+    obs.observe(doc.documentElement, {
       attributes: true,
       attributeFilter: [attrName],
     });
 
     const timer = setTimeout(() => {
       obs.disconnect();
-      const finalVal = document.documentElement.getAttribute(attrName);
+      const finalVal = doc.documentElement.getAttribute(attrName);
       log('waitForInterceptedDeck: TIMED OUT after', timeoutMs, 'ms. Final attr:', JSON.stringify(finalVal));
-      const domEl = document.getElementById(elementId);
+      const domEl = doc.getElementById(elementId);
       log('waitForInterceptedDeck: element exists at timeout:', !!domEl);
       if (finalVal === 'ready') {
         log('waitForInterceptedDeck: attr is ready at timeout – reading anyway');
-        resolve(readInterceptedDeck({ elementId, logFn: log }));
+        resolve(readInterceptedDeck({ elementId, document: doc, logFn: log }));
       } else {
         resolve(null);
       }

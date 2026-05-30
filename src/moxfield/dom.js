@@ -98,11 +98,18 @@ export function findSmallestMenu(root, menuKeywords) {
  * selecting/right-clicking a card updates the persistent preview panel with
  * "Add to Wish List" and buy buttons.
  *
+ * Returns nothing on owned decks (which have deck search controls),
+ * because those decks use the context menu for tag injection instead.
+ *
  * @param {Element} root - The root element to search.
  * @returns {Element[]} Action containers that can accept injected controls.
  */
 export function findCardPreviewActionPanels(root) {
   if (!root?.querySelectorAll && !root?.matches) return [];
+
+  // Preview panel injection is only for public (non-owned) decks.
+  // Owned decks use the two-column context menu for tag injection.
+  if (hasDeckSearchControls(root)) return [];
 
   const containers = [];
   if (root.matches?.('.deckview-image-container')) {

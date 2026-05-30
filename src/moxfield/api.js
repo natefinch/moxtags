@@ -19,6 +19,7 @@ export function lookupCardByMoxfieldId(cardId, options = {}) {
   const cache = options.cache;
   const onResolved = options.onResolved || (() => {});
   const timeoutMs = options.timeoutMs || 5000;
+  const win = options.window ?? window;
   const log = options.logFn || (() => {});
 
   // Check in-memory cache first.
@@ -33,14 +34,14 @@ export function lookupCardByMoxfieldId(cardId, options = {}) {
   return new Promise((resolve) => {
     const requestId = `${cardId}-${Date.now()}`;
     const timeout = setTimeout(() => {
-      window.removeEventListener('message', handler);
+      win.removeEventListener('message', handler);
       log('Card lookup timed out for', cardId);
       resolve(null);
     }, timeoutMs);
 
     function handler(e) {
       if (e.data?.type !== 'moxtags-card-result' || e.data.requestId !== requestId) return;
-      window.removeEventListener('message', handler);
+      win.removeEventListener('message', handler);
       clearTimeout(timeout);
       if (e.data.error || !e.data.set || !e.data.cn) {
         log('Card lookup failed:', cardId, e.data.error || 'missing set/cn');
@@ -56,7 +57,7 @@ export function lookupCardByMoxfieldId(cardId, options = {}) {
       }
     }
 
-    window.addEventListener('message', handler);
-    window.postMessage({ type: 'moxtags-card-lookup', cardId, requestId }, '*');
+    win.addEventListener('message', handler);
+    win.postMessage({ type: 'moxtags-card-lookup', cardId, requestId }, '*');
   });
 }

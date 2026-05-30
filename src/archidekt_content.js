@@ -681,7 +681,9 @@ import { createTagAutocomplete } from './shared/tag-autocomplete-ui.js';
     });
     const wrapper = document.createElement('div');
     wrapper.className = INJECTED_CLASS;
+    wrapper.dataset.moxtagsSurface = 'archidekt-menu';
     wrapper.dataset.moxtagsCard = cardKey(card);
+    wrapper.dataset.moxtagsCardKey = cardKey(card);
     wrapper.addEventListener('mousedown', stopPropagation);
     wrapper.addEventListener('click', stopPropagation);
 
@@ -753,7 +755,9 @@ import { createTagAutocomplete } from './shared/tag-autocomplete-ui.js';
 
     const wrapper = document.createElement('div');
     wrapper.className = DETAILS_TAGS_CLASS;
+    wrapper.dataset.moxtagsSurface = 'archidekt-details';
     wrapper.dataset.moxtagsCard = key;
+    wrapper.dataset.moxtagsCardKey = key;
     wrapper.addEventListener('mousedown', stopPropagation);
     wrapper.addEventListener('click', stopPropagation);
     extraInfo.insertBefore(wrapper, legalitiesHeading);
@@ -855,6 +859,7 @@ import { createTagAutocomplete } from './shared/tag-autocomplete-ui.js';
     const section = document.createElement('section');
     section.className = 'moxtags-archidekt-details-section';
     const sectionKey = tagSectionKey(prefix);
+    section.dataset.moxtagsSection = sectionKey;
 
     const heading = document.createElement('h4');
     heading.className = 'moxtags-archidekt-details-heading';
@@ -862,6 +867,7 @@ import { createTagAutocomplete } from './shared/tag-autocomplete-ui.js';
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'moxtags-archidekt-details-toggle';
+    button.dataset.moxtagsTrigger = sectionKey;
 
     const chevron = document.createElement('span');
     chevron.className = 'moxtags-archidekt-details-chevron';
@@ -931,6 +937,7 @@ import { createTagAutocomplete } from './shared/tag-autocomplete-ui.js';
   function buildDetailsTagLink(tag, prefix) {
     const link = document.createElement('a');
     link.className = 'moxtags-archidekt-details-tag-link';
+    link.dataset.moxtagsTagPrefix = prefix;
     link.href = '#';
     link.textContent = tag.name;
     link.title = `Search Archidekt for ${prefix}:${tag.slug}`;
@@ -1050,6 +1057,7 @@ import { createTagAutocomplete } from './shared/tag-autocomplete-ui.js';
   function buildSubmenuTrigger(title, tags, prefix, nativeButtonClass, appendToCurrentSearch) {
     const wrapper = document.createElement('div');
     wrapper.className = 'moxtags-archidekt-trigger-wrap';
+    wrapper.dataset.moxtagsTrigger = tagSectionKey(prefix);
 
     const trigger = document.createElement('button');
     trigger.type = 'button';
@@ -1132,6 +1140,7 @@ import { createTagAutocomplete } from './shared/tag-autocomplete-ui.js';
 
       const link = document.createElement('a');
       link.className = 'moxtags-archidekt-tag-link';
+      link.dataset.moxtagsTagPrefix = prefix;
       link.href = '#';
       link.textContent = tag.name;
       link.title = `Search Archidekt for ${prefix}:${tag.slug}`;

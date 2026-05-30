@@ -27,6 +27,7 @@ import { lookupCardByMoxfieldId as _lookupCardByMoxfieldId } from './moxfield/ap
 import { createTagAutocomplete } from './shared/tag-autocomplete-ui.js';
 import { bindPersistentCollapsibleSection } from './shared/collapsible-state.js';
 import { buildScryfallSearchUrl } from './shared/scryfall-page.js';
+import { installMenuToggle } from './shared/menu-toggle.js';
 import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
 
 (function () {
@@ -45,6 +46,7 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
   let searchTagsOnScryfall = false;
   let observer = null;
   let lastUrl = location.href;
+  let navWatcherId = null;
 
   // Persistent cache: Moxfield card ID → { set, cn }.
   // Avoids repeated Moxfield API lookups for the same card across sessions.
@@ -527,7 +529,7 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
       return;
     }
 
-    const cardKey = getCardContextKey(cardInfo);
+    const cardKey = cardInfo.moxCardId ? `mox:${cardInfo.moxCardId}` : getCardContextKey(cardInfo);
     const existing = panel.querySelector('.moxtags-injected');
     if (cardKey && existing?.dataset.moxtagsCardKey === cardKey) return;
 
@@ -560,8 +562,8 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
 
   function getCardContextKey(cardInfo) {
     if (!cardInfo) return '';
-    if (cardInfo.set && cardInfo.cn) return `${cardInfo.set}/${cardInfo.cn}`;
     if (cardInfo.moxCardId) return `mox:${cardInfo.moxCardId}`;
+    if (cardInfo.set && cardInfo.cn) return `${cardInfo.set}/${cardInfo.cn}`;
     if (cardInfo.name) return `name:${cardInfo.name.toLowerCase()}`;
     return '';
   }
@@ -601,16 +603,17 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
 
     const wrapper = document.createElement('div');
     wrapper.className = 'moxtags-long-btn-wrapper moxtags-injected mt-2';
-
+    wrapper.dataset.moxtagsSurface = 'moxfield-long-layout';
+    if (moxCardId) wrapper.dataset.moxtagsCardKey = `mox:${moxCardId}`;
     wrapper.appendChild(buildLongLayoutTagButton('Art Tags', 'art', moxCardId, cardName));
     wrapper.appendChild(buildLongLayoutTagButton('Card Tags', 'otag', moxCardId, cardName));
-
     moreOptionsBtn.after(wrapper);
   }
 
   function buildLongLayoutTagButton(title, searchPrefix, moxCardId, cardName) {
     const container = document.createElement('div');
     container.className = 'moxtags-long-tag-container mt-2';
+    container.dataset.moxtagsTrigger = searchPrefix === 'art' ? 'art-tags' : 'card-tags';
 
     const btn = document.createElement('button');
     btn.className = 'btn w-100 btn-secondary';
@@ -626,38 +629,20 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
 
     const menu = document.createElement('div');
     menu.className = 'dropdown-menu moxtags-long-menu';
+    menu.dataset.moxtagsSurface = 'moxfield-long-layout-menu';
     container.appendChild(menu);
 
     let loaded = false;
 
-    btn.addEventListener('click', async (e) => {
-      e.stopPropagation();
+    installMenuToggle({
+      button: btn,
+      menu,
+      container,
+      onOpen: () => loadTagsOnFirstOpen(),
+    });
+
+    async function loadTagsOnFirstOpen() {
       log('Long layout button clicked:', title, 'cardId:', moxCardId, 'name:', cardName);
-
-      // Close other open long-layout menus.
-      document.querySelectorAll('.moxtags-long-menu.show').forEach(m => {
-        if (m !== menu) m.classList.remove('show');
-      });
-
-      if (menu.classList.contains('show')) {
-        menu.classList.remove('show');
-        return;
-      }
-
-      menu.classList.add('show');
-
-      // Close the menu when the user clicks anywhere outside it.
-      // Use a one-time listener registered after a microtask so it
-      // doesn't immediately catch the current click.
-      setTimeout(() => {
-        function closeOnOutsideClick(ev) {
-          if (!container.contains(ev.target)) {
-            menu.classList.remove('show');
-            document.removeEventListener('mousedown', closeOnOutsideClick, true);
-          }
-        }
-        document.addEventListener('mousedown', closeOnOutsideClick, true);
-      }, 0);
 
       if (loaded) return;
       loaded = true;
@@ -740,7 +725,7 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
       }
 
       renderLongMenuTags(menu, relevantTags, searchPrefix);
-    });
+    }
 
     return container;
   }
@@ -882,6 +867,7 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
     // Create a wrapper for all our injected elements.
     const wrapper = document.createElement('div');
     wrapper.className = options.previewPanel ? 'moxtags-injected moxtags-preview-injected d-grid gap-2' : 'moxtags-injected';
+    wrapper.dataset.moxtagsSurface = options.previewPanel ? 'moxfield-preview' : 'moxfield-menu';
     if (cardKey) wrapper.dataset.moxtagsCardKey = cardKey;
 
     // Divider
@@ -1138,6 +1124,7 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
   function buildSubmenuTrigger(title, tags, searchPrefix, className = 'dropdown-item cursor-pointer no-outline moxtags-trigger') {
     const trigger = document.createElement('div');
     trigger.className = className;
+    trigger.dataset.moxtagsTrigger = searchPrefix === 'art' ? 'art-tags' : 'card-tags';
 
     const label = document.createElement('span');
     label.className = 'moxtags-trigger-label';
@@ -1316,6 +1303,7 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
 
     const wrapper = document.createElement('div');
     wrapper.className = 'moxtags-moxfield-overlay-tags';
+    wrapper.dataset.moxtagsSurface = 'moxfield-card-overlay';
 
     const loader = document.createElement('p');
     loader.className = 'moxtags-moxfield-overlay-message text-muted';
@@ -1449,6 +1437,7 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
     const section = document.createElement('section');
     section.className = 'moxtags-moxfield-overlay-section';
     const sectionKey = tagSectionKey(searchPrefix);
+    section.dataset.moxtagsSection = sectionKey;
 
     const heading = document.createElement('h3');
     heading.className = 'moxtags-moxfield-overlay-heading';
@@ -1456,6 +1445,7 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
     const toggle = document.createElement('button');
     toggle.type = 'button';
     toggle.className = 'moxtags-moxfield-overlay-toggle';
+    toggle.dataset.moxtagsTrigger = sectionKey;
 
     const chevron = document.createElement('span');
     chevron.className = 'moxtags-moxfield-overlay-chevron';
@@ -1512,6 +1502,7 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
 
     const link = document.createElement('a');
     link.className = 'moxtags-moxfield-overlay-tag-link';
+    link.dataset.moxtagsTagPrefix = searchPrefix;
     link.textContent = tag.name;
     link.title = shouldSearchTagsOnScryfall()
       ? 'Search Scryfall for this tag'
@@ -1574,6 +1565,9 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
 
     const wrapper = document.createElement('div');
     wrapper.className = 'moxtags-moxfield-overlay-tags';
+    wrapper.dataset.moxtagsSurface = 'moxfield-card-page';
+    const cardKey = getCardContextKey(identity);
+    if (cardKey) wrapper.dataset.moxtagsCardKey = cardKey;
 
     const loader = document.createElement('p');
     loader.className = 'moxtags-moxfield-overlay-message text-muted';
@@ -1861,7 +1855,6 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
   }
 
   // ─── SPA navigation ───────────────────────────────────────────────
-  let navWatcherId = null;
   function watchNavigation() {
     if (navWatcherId) return; // already watching
     navWatcherId = setInterval(() => {

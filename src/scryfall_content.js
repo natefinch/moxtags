@@ -59,6 +59,8 @@ import { createTagAutocomplete } from './shared/tag-autocomplete-ui.js';
     const container = document.createElement('section');
     container.className = `card-text-box ${CONTAINER_CLASS} moxtags-injected`;
     container.setAttribute('aria-label', 'Scryfall Tagger tags');
+    container.dataset.moxtagsSurface = 'scryfall-card';
+    container.dataset.moxtagsCardKey = cardKey(identity);
     renderLoading(container);
     artist.after(container);
     return { artist, identity, container };
@@ -243,12 +245,14 @@ import { createTagAutocomplete } from './shared/tag-autocomplete-ui.js';
     const section = document.createElement('div');
     section.className = 'moxtags-scryfall-section';
     const sectionKey = tagSectionKey(prefix);
+    section.dataset.moxtagsSection = sectionKey;
 
     const heading = document.createElement('h3');
     heading.className = 'moxtags-scryfall-heading';
     const toggle = document.createElement('button');
     toggle.type = 'button';
     toggle.className = 'moxtags-scryfall-toggle';
+    toggle.dataset.moxtagsTrigger = sectionKey;
 
     const label = document.createElement('span');
     label.className = 'moxtags-scryfall-toggle-label';
@@ -308,6 +312,7 @@ import { createTagAutocomplete } from './shared/tag-autocomplete-ui.js';
 
     const link = document.createElement('a');
     link.className = 'moxtags-tag-item moxtags-scryfall-tag-link';
+    link.dataset.moxtagsTagPrefix = prefix;
     link.href = buildTagSearchUrl(prefix, tag.slug, location.origin);
     link.textContent = tag.name;
     link.setAttribute('aria-label', `Add ${prefix}:${tag.slug} to the Scryfall search`);
