@@ -130,6 +130,66 @@ export function findCardPreviewActionPanels(root) {
 }
 
 /**
+ * Check whether the current Moxfield deck page exposes controls that can run
+ * a search against this deck, which indicates the viewer owns/can edit it.
+ *
+ * @param {Document|Element} root - Document or root element to search.
+ * @param {string|null} [deckId] - Current deck ID, used to validate edit links.
+ * @returns {boolean}
+ */
+export function hasDeckSearchControls(root, deckId = null) {
+  if (!root) return false;
+  const doc = root.nodeType === 9 ? root : root.ownerDocument;
+  const searchRoot = root.querySelector ? root : doc;
+  if (!searchRoot) return false;
+
+  if (searchRoot.querySelector?.('#deckbox-search')) return true;
+
+  const links = searchRoot.querySelectorAll?.('a[href]') || [];
+  for (const link of links) {
+    const href = link.getAttribute('href') || '';
+    const pathname = parsePathname(href);
+    if (!pathname) continue;
+    if (deckId) {
+      if (pathname === `/decks/${deckId}/edit`) return true;
+    } else if (/^\/decks\/[A-Za-z0-9_-]+\/edit\/?$/.test(pathname)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Check whether an action menu belongs to a deck owned by another user.
+ *
+ * @param {Element} el - Candidate menu element.
+ * @param {Object} [options]
+ * @param {Document|Element} [options.root] - Page root for ownership checks.
+ * @param {string|null} [options.deckId] - Current deck ID.
+ * @returns {boolean}
+ */
+export function isPublicDeckActionMenu(el, options = {}) {
+  const text = el?.textContent || '';
+  if (!text.includes('Add to Another Deck')
+    || !text.includes('Add to Collection')
+    || !text.includes('Add to Wish List')
+    || text.includes('Change Tags')) {
+    return false;
+  }
+
+  const root = options.root || el?.ownerDocument;
+  return !hasDeckSearchControls(root, options.deckId || null);
+}
+
+function parsePathname(href) {
+  try {
+    return new URL(href, 'https://moxfield.com').pathname.replace(/\/$/, '');
+  } catch {
+    return '';
+  }
+}
+
+/**
  * Find a menu item by its visible text. Returns the direct child of
  * `container` that contains the target text.
  *
@@ -164,6 +224,42 @@ export function extractCardIdFromMenu(menu) {
     if (id) return id;
   }
   return null;
+}
+
+/**
+ * Extract card identity from a Moxfield search-result card tile.
+ *
+ * Deck search result tiles can open an inline Options dropdown even when the
+ * result card is not already in the deck card map. In that case the card link
+ * is still enough to resolve the exact printing through Moxfield's API later.
+ *
+ * @param {Element} card - The .decklist-card result tile.
+ * @param {Map} cardMap - Map of lowercase card name -> deck card info.
+ * @returns {{name: string, set: string|null, cn: string|null, moxCardId: string|null}|null}
+ */
+export function extractCardInfoFromSearchResultCard(card, cardMap) {
+  if (!card?.querySelector) return null;
+
+  const name = card.querySelector('.decklist-card-phantomsearch')?.textContent?.trim()
+    || scanForCardName(card, cardMap);
+  const info = name ? cardMap.get(name.toLowerCase()) : null;
+  const cardLinkId = extractCardIdFromMenu(card);
+  const moxCardId = cardLinkId || card.dataset?.hash || null;
+
+  if (!name && !moxCardId) return null;
+  if (info) {
+    return {
+      ...info,
+      moxCardId: moxCardId || info.moxCardId || null,
+    };
+  }
+
+  return {
+    name: name || '',
+    set: null,
+    cn: null,
+    moxCardId,
+  };
 }
 
 /**
