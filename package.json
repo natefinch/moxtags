@@ -1,6 +1,6 @@
 {
   "name": "moxtags",
-  "version": "1.8.0",
+  "version": "1.8.1",
   "private": true,
   "type": "module",
   "description": "Adds Scryfall Tagger card and art tag menus, tag panels, search helpers, and autocomplete to Moxfield, Scryfall, and Archidekt.",
