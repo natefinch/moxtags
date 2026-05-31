@@ -501,6 +501,24 @@ async function appendOwnedDeckContextMenu(page) {
   });
 }
 
+async function replaceOwnedDeckPreviewPanel(page) {
+  await page.evaluate(() => {
+    document.querySelector('.deckview-image-container')?.remove();
+
+    const preview = document.createElement('aside');
+    preview.className = 'deckview-image-container';
+    preview.innerHTML = `
+      <img alt="E2E Test Card" src="https://assets.moxfield.net/cards/card-vPo0V-normal.webp">
+      <div class="d-grid gap-2 mt-4 mx-auto">
+        <button class="btn btn-sm btn-outline-primary">
+          <span><span>Add to Wish List</span></span>
+        </button>
+        <a class="btn btn-sm btn-primary" href="#">Buy @ TCGplayer</a>
+      </div>`;
+    document.body.appendChild(preview);
+  });
+}
+
 async function appendSearchOptionsMenu(page) {
   await page.evaluate(() => {
     const menu = document.createElement('div');
@@ -701,6 +719,10 @@ test.describe('Playwright extension foundation', () => {
       await expect(menuInjection.locator('[data-moxtags-trigger="card-tags"] .moxtags-trigger-label', { hasText: 'Card Tags' }))
         .toHaveCount(1);
 
+      await expect(page.locator('.deckview-image-container [data-moxtags-surface]')).toHaveCount(0);
+      await expect(page.locator('[data-moxtags-surface]')).toHaveCount(1);
+
+      await replaceOwnedDeckPreviewPanel(page);
       await expect(page.locator('.deckview-image-container [data-moxtags-surface]')).toHaveCount(0);
       await expect(page.locator('[data-moxtags-surface]')).toHaveCount(1);
 

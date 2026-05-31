@@ -109,7 +109,8 @@ export function findCardPreviewActionPanels(root) {
 
   // Preview panel injection is only for public (non-owned) decks.
   // Owned decks use the two-column context menu for tag injection.
-  if (hasDeckSearchControls(root)) return [];
+  const documentRoot = root.nodeType === 9 ? root : root.ownerDocument;
+  if (hasDeckSearchControls(documentRoot || root)) return [];
 
   const containers = [];
   if (root.matches?.('.deckview-image-container')) {

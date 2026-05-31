@@ -50,6 +50,24 @@ describe('findCardPreviewActionPanels', () => {
 
     assert.deepEqual(findCardPreviewActionPanels(document.body), []);
   });
+
+  it('does not match a newly replaced preview subtree on owned decks', () => {
+    const { document } = parseHTML(`
+      <form><input id="deckbox-search" type="search"></form>
+      <aside class="deckview-image-container">
+        <img alt="Front" src="https://assets.moxfield.net/cards/card-vPo0V-normal.webp">
+        <div class="d-grid gap-2 mt-4 mx-auto">
+          <button class="btn btn-sm btn-outline-primary">
+            <span><span>Add to Wish List</span></span>
+          </button>
+          <a class="btn btn-sm btn-primary">Buy @ TCGplayer</a>
+        </div>
+      </aside>
+    `);
+    const preview = document.querySelector('.deckview-image-container');
+
+    assert.deepEqual(findCardPreviewActionPanels(preview), []);
+  });
 });
 
 describe('extractCardIdFromCardPreviewPanel', () => {
