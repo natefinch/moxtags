@@ -746,7 +746,7 @@ test.describe('Playwright extension foundation', () => {
     }
   });
 
-  test('injects card and art tags into the public deck preview panel only', async () => {
+  test('does not inject card and art tags into the public deck preview panel', async () => {
     const { context, close, networkGuard } = await launchGuardedContext();
     const page = await context.newPage();
 
@@ -755,11 +755,9 @@ test.describe('Playwright extension foundation', () => {
       await page.locator('body').dispatchEvent('mousedown', { bubbles: true });
 
       const previewInjection = page.locator('.deckview-image-container [data-moxtags-surface="moxfield-preview"]');
-      await expect(previewInjection).toHaveCount(1, { timeout: 15_000 });
-      await expect(previewInjection.locator(':scope > [data-moxtags-trigger="art-tags"]')).toHaveCount(1);
-      await expect(previewInjection.locator(':scope > [data-moxtags-trigger="card-tags"]')).toHaveCount(1);
+      await expect(previewInjection).toHaveCount(0);
       await expect(page.locator('.dropdown-menu.show [data-moxtags-surface]')).toHaveCount(0);
-      await expect(page.locator('[data-moxtags-surface]')).toHaveCount(1);
+      await expect(page.locator('[data-moxtags-surface]')).toHaveCount(0);
     } finally {
       networkGuard.assertNoEscapes();
       await close();

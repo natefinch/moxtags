@@ -92,49 +92,17 @@ export function findSmallestMenu(root, menuKeywords) {
 }
 
 /**
- * Find public-deck card action panels shown in Moxfield's left card preview.
+ * Find Moxfield left-card-preview action panels.
  *
- * Public decks do not show the editable two-column context menu. Instead,
- * selecting/right-clicking a card updates the persistent preview panel with
- * "Add to Wish List" and buy buttons.
- *
- * Returns nothing on owned decks (which have deck search controls),
- * because those decks use the context menu for tag injection instead.
+ * MoxTags no longer injects into the persistent preview panel. Public and
+ * owned deck card actions are handled through actual dropdown/context menus,
+ * so this intentionally returns no injection targets.
  *
  * @param {Element} root - The root element to search.
  * @returns {Element[]} Action containers that can accept injected controls.
  */
 export function findCardPreviewActionPanels(root) {
-  if (!root?.querySelectorAll && !root?.matches) return [];
-
-  // Preview panel injection is only for public (non-owned) decks.
-  // Owned decks use the two-column context menu for tag injection.
-  const documentRoot = root.nodeType === 9 ? root : root.ownerDocument;
-  if (hasDeckSearchControls(documentRoot || root)) return [];
-
-  const containers = [];
-  if (root.matches?.('.deckview-image-container')) {
-    containers.push(root);
-  }
-  const closest = root.closest?.('.deckview-image-container');
-  if (closest && !containers.includes(closest)) {
-    containers.push(closest);
-  }
-  if (root.querySelectorAll) {
-    for (const container of root.querySelectorAll('.deckview-image-container')) {
-      if (!containers.includes(container)) containers.push(container);
-    }
-  }
-
-  const panels = [];
-  for (const container of containers) {
-    for (const panel of container.querySelectorAll('.d-grid')) {
-      if (findAnchorItem(panel, 'Add to Wish List')) {
-        panels.push(panel);
-      }
-    }
-  }
-  return panels;
+  return [];
 }
 
 /**

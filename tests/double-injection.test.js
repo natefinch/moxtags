@@ -1,10 +1,8 @@
 // Reproduction test for double-injection bug on owned Moxfield deck pages.
 //
-// BUG: On an owned deck page, MoxTags injects Art Tags / Card Tags into
-// BOTH the right-click context menu AND the card preview panel on the left.
-// The preview panel injection is only supposed to happen on PUBLIC decks
-// (where there is no context menu). On owned decks, only the context menu
-// should receive tags.
+// Regression coverage for avoiding Moxfield card preview panel injection.
+// Tags belong in actual dropdown/context menus, not in the persistent preview
+// panel on the left.
 //
 // This test simulates the full injection flow that content.js performs:
 //   1. Build an owned deck page DOM (search box present, preview panel visible)
@@ -172,7 +170,7 @@ function buildPublicDeckPage() {
  *
  * This mirrors the content.js scan order:
  *   - scanForMenu(body) → finds context menus via isCardMenu
- *   - scanForCardPreviewPanel(body) → finds preview panels
+ *   - card preview panels are ignored; tags belong in dropdown/context menus
  */
 function runInjectionCycle(document, deckId) {
   const injected = [];
@@ -192,8 +190,7 @@ function runInjectionCycle(document, deckId) {
     }
   }
 
-  // Phase 2: scanForCardPreviewPanel — find preview action panels.
-  // content.js calls this on every mousedown via pollForCardPreviewPanel().
+  // Phase 2: preview panels are no longer injection targets.
   const previewPanels = findCardPreviewActionPanels(document.body);
   for (const panel of previewPanels) {
     if (!panel.querySelector('.moxtags-injected')) {
@@ -266,29 +263,27 @@ describe('owned deck: injection targets', () => {
 });
 
 describe('public deck: injection targets', () => {
-  it('tags should appear in the card preview panel (the only injection target)', () => {
+  it('tags should not appear in the card preview panel', () => {
     const document = buildPublicDeckPage();
 
     // Sanity: this is NOT an owned deck.
     assert.equal(hasDeckSearchControls(document, 'test-deck'), false,
       'precondition: page should NOT be detected as an owned deck');
 
-    // No context menu exists on public deck pages (only the preview panel).
+    // No context menu exists in this fixture.
     const menu = document.querySelector('.dropdown-menu.show');
     assert.equal(menu, null, 'precondition: no context menu on public deck');
 
     // Run injection.
     const targets = runInjectionCycle(document, 'test-deck');
 
-    // On a public deck, the preview panel IS the correct injection target.
     const allInjections = document.querySelectorAll('.moxtags-injected');
-    assert.equal(allInjections.length, 1,
-      'Expected exactly 1 injection site (the preview panel)');
-    assert.equal(targets[0].type, 'preview',
-      'The injection target should be the preview panel');
+    assert.equal(allInjections.length, 0,
+      'Expected no preview-panel injection site');
+    assert.equal(targets.length, 0,
+      'The preview panel should not be an injection target');
 
-    // Verify it has the preview-panel styling.
     const previewInjection = document.querySelector('.moxtags-preview-injected');
-    assert.ok(previewInjection, 'injection should use preview panel styling');
+    assert.equal(previewInjection, null, 'preview panel should not receive tags');
   });
 });

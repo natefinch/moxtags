@@ -22,7 +22,7 @@ function parseExampleHtml(filename) {
 }
 
 describe('findCardPreviewActionPanels', () => {
-  it('finds the public-deck preview action panel', () => {
+  it('does not return public-deck preview action panels', () => {
     const { document } = parseHTML(`
       <aside class="deckview-image-container">
         <img alt="Front" src="https://assets.moxfield.net/cards/card-vPo0V-normal.webp?318604914">
@@ -37,8 +37,7 @@ describe('findCardPreviewActionPanels', () => {
 
     const panels = findCardPreviewActionPanels(document.body);
 
-    assert.equal(panels.length, 1);
-    assert.ok(panels[0].classList.contains('d-grid'));
+    assert.equal(panels.length, 0);
   });
 
   it('does not match unrelated token wish list controls', () => {
@@ -184,10 +183,9 @@ describe('Moxfield example HTML fixtures', () => {
     const ownedPanels = findCardPreviewActionPanels(owned.body);
     assert.equal(ownedPanels.length, 0);
 
-    // Public (other-user) decks should return the preview panel.
+    // Public (other-user) decks should not inject into the persistent preview panel.
     const otherPanels = findCardPreviewActionPanels(otherUser.body);
-    assert.equal(otherPanels.length, 1);
-    assert.equal(extractCardIdFromCardPreviewPanel(otherPanels[0]), 'VB1O3');
+    assert.equal(otherPanels.length, 0);
   });
 });
 

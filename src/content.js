@@ -16,8 +16,6 @@ import {
   scanForCardName as _scanForCardName, isCardMenu as _isCardMenu,
   findSmallestMenu as _findSmallestMenu, findAnchorItem as _findAnchorItem,
   extractCardIdFromMenu as _extractCardIdFromMenu,
-  extractCardIdFromCardPreviewPanel as _extractCardIdFromCardPreviewPanel,
-  findCardPreviewActionPanels as _findCardPreviewActionPanels,
   addToSearchAndRun as _addToSearchAndRun,
   hasDeckSearchControls as _hasDeckSearchControls,
   isPublicDeckActionMenu as _isPublicDeckActionMenu,
@@ -205,7 +203,6 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
           mergeMoxIds(result.moxIds);
           log('fetchDeckData: Strategy 1 SUCCESS');
           prefetchAllTags();
-          scanForCardPreviewPanel(document.body);
           return;
         }
         log('fetchDeckData: buildCardMap returned null for', url);
@@ -230,7 +227,6 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
       mergeMoxIds(result.moxIds);
       log('fetchDeckData: Strategy 2 SUCCESS');
       prefetchAllTags();
-      scanForCardPreviewPanel(document.body);
       return;
     }
 
@@ -298,11 +294,6 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
         }
       }
     }
-    pollForCardPreviewPanel();
-  }
-
-  function pollForCardPreviewPanel() {
-    scanForCardPreviewPanel(document.body);
   }
 
   function identifyCard(el) {
@@ -319,7 +310,6 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
       for (const node of mut.addedNodes) {
         if (node.nodeType !== Node.ELEMENT_NODE) continue;
         scanForMenu(node);
-        scanForCardPreviewPanel(node);
         scanForDialog(node);
         scanForCardOverlay(node);
         scanForCardDropdown(node);
@@ -329,7 +319,6 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
       // Also check attribute changes – menus may be shown/hidden via style.
       if (mut.type === 'attributes' && mut.target?.nodeType === Node.ELEMENT_NODE) {
         scanForMenu(mut.target);
-        scanForCardPreviewPanel(mut.target);
         scanForDialog(mut.target);
         scanForCardOverlay(mut.target);
         scanForCardDropdown(mut.target);
@@ -481,7 +470,6 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
 
   function pollForMenu() {
     if (!currentCard && !lastOptionsCard) {
-      pollForCardPreviewPanel();
       return;
     }
     // Search for a card menu. Start from portals / overlays
@@ -510,63 +498,10 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
         return;
       }
     }
-    pollForCardPreviewPanel();
   }
 
   function findSmallestMenu(root) {
     return _findSmallestMenu(root, MENU_KEYWORDS);
-  }
-
-  // ─── Public deck preview action panel detection ─────────────────────
-  // Public decks don't show the editable two-column context menu. The
-  // selected/right-clicked card instead updates the persistent card preview
-  // action panel with "Add to Wish List" and buy buttons.
-
-  function scanForCardPreviewPanel(el) {
-    const panels = _findCardPreviewActionPanels(el);
-    for (const panel of panels) {
-      injectTagsIntoCardPreviewPanel(panel);
-    }
-  }
-
-  function injectTagsIntoCardPreviewPanel(panel) {
-    markSearchTagsOnScryfall('public deck preview panel');
-
-    const cardInfo = resolveCardPreviewPanelCard(panel);
-    if (!cardInfo) {
-      log('Public deck card preview panel found but could not identify card');
-      return;
-    }
-
-    const cardKey = cardInfo.moxCardId ? `mox:${cardInfo.moxCardId}` : getCardContextKey(cardInfo);
-    const existing = panel.querySelector('.moxtags-injected');
-    if (cardKey && existing?.dataset.moxtagsCardKey === cardKey) return;
-
-    currentCard = cardInfo;
-    log('Public deck card preview panel detected:', currentCard.name || currentCard.moxCardId);
-    injectTagsIntoMenu(panel, { cardKey, previewPanel: true, persistent: true });
-  }
-
-  function resolveCardPreviewPanelCard(panel) {
-    const moxCardId = _extractCardIdFromCardPreviewPanel(panel);
-    if (moxCardId) {
-      const cached = moxIdCache.get(moxCardId);
-      if (cached) {
-        return {
-          name: currentCard?.name || '',
-          set: cached.set,
-          cn: cached.cn,
-          moxCardId,
-        };
-      }
-      return {
-        name: currentCard?.name || '',
-        set: currentCard?.set || null,
-        cn: currentCard?.cn || null,
-        moxCardId,
-      };
-    }
-    return currentCard;
   }
 
   function getCardContextKey(cardInfo) {
@@ -860,7 +795,7 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
     }
 
     // Determine where to insert our tags.
-    // Two-column deck context menu and preview panels: insert after "Add to Wish List".
+    // Two-column deck context menu: insert after "Add to Wish List".
     // Single-column dropdowns: insert at the end, regardless of the final item.
     const leftCol = insertionContainer.querySelector('.d-flex.flex-nowrap > .d-inline-block:first-child');
     const wishListAnchor = (leftCol && findAnchorItem(leftCol, 'Add to Wish List'))

@@ -51,7 +51,7 @@ Chrome extension.
 
 These are the highest-value next tests because Moxfield is the most complex SPA integration and has the most stateful injection behavior.
 
-- Public/other-user deck preview panel injection.
+- Public/other-user deck action dropdown injection, without preview-panel injection.
 - Search results Options dropdown injection.
 - Search results long-layout standalone Art Tags/Card Tags buttons.
 - Moxfield card detail page tag panels.
@@ -113,13 +113,12 @@ Stable selectors exist on some injected UI, but should be applied consistently.
 Add attributes for:
 
 - Moxfield menu injection wrappers.
-- Moxfield preview panel wrappers.
 - Moxfield long-layout buttons and menus.
 - Moxfield card overlay sections.
 - Scryfall card/search page sections.
 - Archidekt menu flyouts and details sections.
 - Trigger type: `art-tags` vs `card-tags`.
-- Surface type: `moxfield-menu`, `moxfield-preview`, `moxfield-long-layout`, `scryfall-card`, `archidekt-menu`, etc.
+- Surface type: `moxfield-menu`, `moxfield-long-layout`, `scryfall-card`, `archidekt-menu`, etc.
 
 Tests should use these selectors for locating extension-owned UI, while still asserting user-visible behavior and correct placement.
 
