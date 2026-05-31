@@ -10,8 +10,8 @@ MoxTags now implements most of the high-confidence recommendations from the rese
 |---|---|
 | Layer 1: pure unit tests | Implemented. `node:test` covers pure helpers, tag logic, card/deck parsing, API utilities, and shared query builders. |
 | Layer 2: DOM/linkedom tests | Implemented. DOM helper tests cover Moxfield, Scryfall, Archidekt, injection regressions, MutationObserver behavior, and autocomplete UI. |
-| Layer 3: real browser E2E | Started. Playwright loads the built Chrome extension under manifest-matched origins. |
-| Build/manifest smoke tests | Implemented via `tests/build-smoke.test.js`. |
+| Layer 3: real browser E2E | Implemented for Chromium via Playwright and initial Firefox browser-flow coverage via WebDriver. |
+| Build/package smoke tests | Implemented via `tests/build-smoke.test.js` and `tests/release-package-smoke.test.js`. |
 | Mock pages under manifest-matched origins | Implemented for initial Moxfield and Scryfall E2E through Playwright routing. |
 | Mock extension/background traffic | Implemented and proven via Playwright route handling and real `chrome.runtime.sendMessage`. |
 | Moxfield vertical flow | Implemented for owned-deck context menu injection, page hook data, background tag lookup, exact placement, and no preview double-injection. |
@@ -21,10 +21,10 @@ MoxTags now implements most of the high-confidence recommendations from the rese
 | Tag autocomplete UI tests | Implemented in `tests/tag-autocomplete-ui.test.js`. |
 | Stable extension-owned selectors | Started with `data-moxtags-*` attributes on key injected Moxfield and Scryfall UI. |
 | CI pipeline | Implemented in `.github/workflows/test.yml` for unit, build smoke, Chromium E2E, and Firefox lint. |
-| Firefox validation | Partially implemented via `web-ext lint`; full Firefox browser-flow E2E is not implemented. |
-| Cross-browser WebDriver E2E | Not implemented. |
-| Broad E2E surface coverage | Partially implemented. Moxfield owned deck and Scryfall card page are covered; Archidekt and additional Moxfield/Scryfall variants remain. |
-| Network escape detection | Partially implemented through deterministic routes, but no explicit fail-on-unmocked-external-host guard exists yet. |
+| Firefox validation | Implemented via `web-ext lint` and Firefox WebDriver smoke coverage. |
+| Cross-browser WebDriver E2E | Implemented for the Firefox Scryfall card-page smoke flow. |
+| Broad E2E surface coverage | Implemented for Moxfield deck/search/card-page variants, Archidekt menu/details/search flows, and Scryfall card/search pages. |
+| Network escape detection | Implemented through deterministic routes plus an explicit fail-on-unmocked-external-host guard. |
 | Deterministic extension ID | Not needed yet; E2E discovers the loaded extension ID from the service worker. |
 | Retry/flaky annotation policy | Not needed yet; current E2E tests are deterministic and stable. |
 
@@ -36,10 +36,14 @@ Use these commands when changing extension code or tests:
 npm run test:unit
 npm run test:build
 npm run test:e2e
+npm run test:e2e:firefox
 npm run test:firefox-lint
 ```
 
-`npm run test:e2e` rebuilds the extension and runs Playwright Chromium tests against the built Chrome extension.
+`npm run test:build` rebuilds Chrome and Firefox outputs, then verifies manifests,
+referenced files, and release package smoke artifacts. `npm run test:e2e`
+rebuilds the extension and runs Playwright Chromium tests against the built
+Chrome extension.
 
 ## Remaining Work, Prioritized
 
@@ -178,8 +182,12 @@ Beyond manifest checks, verify distributable artifacts:
 5. [x] Add Scryfall search-page E2E.
 6. [x] Deepen background and page-hook hostile timing tests.
 7. [x] Add Firefox WebDriver E2E.
-8. [ ] Add release/package smoke tests.
+8. [x] Add release/package smoke tests.
 
 ## Current Assessment
 
-The test suite now covers roughly 75-80% of the research recommendations by confidence value. The biggest remaining confidence gap is full Firefox browser-flow E2E. The next highest-value work is broader real-browser E2E coverage across Moxfield, Archidekt, and Scryfall page variants, plus network escape detection to guarantee the suite stays deterministic.
+The prioritized testing-plan items are complete. Remaining future work should be
+driven by new product changes or regressions: add page-specific E2E cases when
+new UI surfaces are introduced, expand Firefox WebDriver coverage when Firefox
+differences are suspected, and keep release/package smoke assertions aligned
+with `release.sh`.

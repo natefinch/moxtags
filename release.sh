@@ -177,59 +177,6 @@ cleanup_tmp() {
 }
 trap cleanup_tmp EXIT
 
-create_source_package() {
-  local source_zip="$1"
-  local tmp_dir source_dir repo_root
-  repo_root="$(pwd)"
-  tmp_dir="$(mktemp -d)"
-  TMP_DIRS+=("$tmp_dir")
-  source_dir="$tmp_dir/moxtags-source-${TAG}"
-
-  mkdir -p "$source_dir"
-  cp -R build.js package.json package-lock.json manifests src icons README.md LICENSE PRIVACY.md "$source_dir/"
-  cat > "$source_dir/AMO_BUILD.md" <<EOF
-# AMO reviewer build instructions for MoxTags ${TAG}
-
-The submitted Firefox extension is generated from this source archive with
-esbuild. The release build does not minify code.
-
-## Environment
-
-- Node.js 24.x and npm 11.x are compatible with Mozilla's default reviewer environment.
-- The checked-in package-lock.json must be used.
-
-## Build
-
-\`\`\`bash
-npm ci
-node build.js firefox
-\`\`\`
-
-The build output is written to \`dist/firefox/\`. Compare that directory with
-the submitted Firefox extension package.
-
-Do not run \`node scripts/fetch-tags.js\` for review reproduction; this source
-archive already includes the \`src/data/\` tag index files used for the release.
-EOF
-
-  echo "Packaging $source_zip for AMO source review..."
-  (cd "$tmp_dir" && COPYFILE_DISABLE=1 zip -r -X "$repo_root/$source_zip" "moxtags-source-${TAG}" -x '__MACOSX/*' '*/.*' '.*')
-  echo "  $(du -h "$source_zip" | cut -f1) $source_zip"
-}
-
-set_firefox_dist_version() {
-  local manifest_path="$1"
-  local version="$2"
-  node -e "
-    import { readFileSync, writeFileSync } from 'fs';
-    const path = process.argv[1];
-    const version = process.argv[2];
-    const json = JSON.parse(readFileSync(path, 'utf8'));
-    json.version = version;
-    writeFileSync(path, JSON.stringify(json, null, 2) + '\n');
-  " "$manifest_path" "$version"
-}
-
 # --- Update version ---
 
 echo "Updating version to $VERSION..."
@@ -262,7 +209,7 @@ node build.js
 CHROME_ZIP="moxtags-chrome-${TAG}.zip"
 
 echo "Packaging $CHROME_ZIP..."
-(cd dist/chrome && COPYFILE_DISABLE=1 zip -r -X "../../$CHROME_ZIP" . -x '__MACOSX/*' '*/.*' '.*')
+node scripts/package-release-assets.js chrome --out "$CHROME_ZIP"
 echo "  $(du -h "$CHROME_ZIP" | cut -f1) $CHROME_ZIP"
 
 # --- Submit Firefox extension to AMO and sign local XPI ---
@@ -271,7 +218,9 @@ FIREFOX_XPI="moxtags-firefox-${FIREFOX_LOCAL_TAG}.xpi"
 SOURCE_ZIP="moxtags-source-${TAG}.zip"
 
 if ! $SKIP_FIREFOX_LISTED; then
-  create_source_package "$SOURCE_ZIP"
+  echo "Packaging $SOURCE_ZIP for AMO source review..."
+  node scripts/package-release-assets.js source --tag "$TAG" --out "$SOURCE_ZIP"
+  echo "  $(du -h "$SOURCE_ZIP" | cut -f1) $SOURCE_ZIP"
 
   echo "Submitting Firefox extension to AMO listed channel..."
   rm -rf web-ext-artifacts-listed
@@ -292,8 +241,7 @@ fi
 
 FIREFOX_LOCAL_TMP="$(mktemp -d)"
 TMP_DIRS+=("$FIREFOX_LOCAL_TMP")
-cp -R dist/firefox "$FIREFOX_LOCAL_TMP/firefox"
-set_firefox_dist_version "$FIREFOX_LOCAL_TMP/firefox/manifest.json" "$FIREFOX_LOCAL_VERSION"
+node scripts/package-release-assets.js firefox-dir --version "$FIREFOX_LOCAL_VERSION" --out-dir "$FIREFOX_LOCAL_TMP/firefox"
 
 echo "Signing Firefox self-distributed XPI via AMO (unlisted, version $FIREFOX_LOCAL_VERSION)..."
 rm -rf web-ext-artifacts
