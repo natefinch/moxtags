@@ -4,7 +4,7 @@
 
 A browser extension (Chrome and Firefox) that adds **Scryfall Tagger** art
 tags and card tags to [Moxfield](https://moxfield.com), Scryfall card pages and full search-result pages, and to Archidekt deck
-card menus and card details.
+card menus and card details.  See [screenshots](./SCREENSHOTS.md) here.
 
 MoxTags brings Scryfall Tagger's community-curated tags directly into your
 Moxfield and Archidekt deck building experience, and onto Scryfall card views.
