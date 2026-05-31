@@ -8,7 +8,8 @@ set -euo pipefail
 #
 # By default, increments the minor version (e.g. v1.4.2 → v1.5.0).
 # Use --patch to increment only the patch version (e.g. v1.4.2 → v1.4.3).
-# Use --skip-chrome to skip Chrome Web Store upload/publish (GitHub-only release).
+# Use --skip-chrome to skip Chrome Web Store upload/publish and keep the
+# Chrome zip locally for manual Web Store upload.
 # Use --skip-firefox-listed to skip public AMO submission and only sign the local XPI.
 # Use --dryrun to preview what would happen without making any changes.
 #
@@ -27,7 +28,7 @@ set -euo pipefail
 # Usage:
 #   ./release.sh                        # bump minor version
 #   ./release.sh --patch                # bump patch version
-#   ./release.sh --skip-chrome          # skip Chrome Web Store submission
+#   ./release.sh --skip-chrome          # build Chrome zip but skip Chrome Web Store API
 #   ./release.sh --skip-firefox-listed  # skip public AMO submission
 #   ./release.sh --dryrun               # preview minor bump
 #   ./release.sh --patch --dryrun       # preview patch bump
@@ -87,7 +88,7 @@ if $DRYRUN; then
   if ! $SKIP_CHROME; then
     echo "[dry run] Would upload and publish Chrome extension to Chrome Web Store"
   else
-    echo "[dry run] Skipping Chrome Web Store upload (--skip-chrome)"
+    echo "[dry run] Would keep Chrome package for manual Web Store upload (--skip-chrome)"
   fi
   echo "[dry run] Would create: moxtags-chrome-${TAG}.zip, moxtags-firefox-${FIREFOX_LOCAL_TAG}.xpi"
   echo "[dry run] Would create draft GitHub release with both assets"
@@ -282,7 +283,7 @@ if ! $SKIP_CHROME; then
     --client-secret "$CHROME_CLIENT_SECRET" \
     --refresh-token "$CHROME_REFRESH_TOKEN"
 else
-  echo "Skipping Chrome Web Store upload (--skip-chrome)"
+  echo "Skipping Chrome Web Store upload (--skip-chrome); $CHROME_ZIP will be kept for manual upload"
 fi
 
 # --- Commit version bump & tag ---
@@ -328,7 +329,12 @@ Note: the downloadable Firefox XPI uses AMO's unlisted signing channel and has i
 
 # --- Cleanup ---
 
-rm "$CHROME_ZIP" "$FIREFOX_XPI"
+if ! $SKIP_CHROME; then
+  rm "$CHROME_ZIP"
+else
+  echo "Chrome package ready for manual Web Store upload: $CHROME_ZIP"
+fi
+rm "$FIREFOX_XPI"
 if [[ -f "$SOURCE_ZIP" ]]; then
   rm "$SOURCE_ZIP"
 fi

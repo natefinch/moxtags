@@ -52,6 +52,10 @@ function requireOption(options, name) {
   return options[name];
 }
 
+function readReleaseVersion() {
+  return JSON.parse(readFileSync(join(ROOT, 'manifests', 'base.json'), 'utf8')).version;
+}
+
 function ensureZipAvailable() {
   const result = spawnSync('zip', ['-v'], { stdio: 'ignore' });
   if (result.error || result.status !== 0) {
@@ -168,7 +172,7 @@ async function main() {
     case 'chrome':
       createChromePackage({
         sourceDir: options['source-dir'] ? resolve(options['source-dir']) : undefined,
-        out: resolve(requireOption(options, 'out')),
+        out: resolve(options.out ?? `moxtags-chrome-v${readReleaseVersion()}.zip`),
       });
       break;
     case 'firefox-dir':
@@ -194,7 +198,8 @@ async function main() {
       break;
     default:
       throw new Error(
-        'Usage: package-release-assets.js <chrome|firefox-dir|firefox-xpi|source> [options]',
+        'Usage: package-release-assets.js <chrome|firefox-dir|firefox-xpi|source> [options]\n' +
+          '  chrome [--source-dir dist/chrome] [--out moxtags-chrome-vX.Y.Z.zip]',
       );
   }
 }

@@ -132,6 +132,21 @@ describe('release package smoke artifacts', () => {
     assert.deepEqual(manifest.background, { service_worker: 'background.js' });
   });
 
+  it('defaults the Chrome package name to the manifest version', () => {
+    requireCommand('zip');
+
+    const archiveName = `moxtags-chrome-v${JSON.parse(readFileSync(join(ROOT, 'manifests/base.json'), 'utf8')).version}.zip`;
+    const archive = join(ROOT, archiveName);
+    rmSync(archive, { force: true });
+
+    try {
+      packageAsset('chrome');
+      assert.ok(existsSync(archive), 'Chrome package should default to a versioned zip name');
+    } finally {
+      rmSync(archive, { force: true });
+    }
+  });
+
   it('packages the Firefox local-install XPI shape with the local version suffix', () => {
     requireCommand('zip');
     requireCommand('unzip');

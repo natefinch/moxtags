@@ -32,6 +32,27 @@ copy those tags into searches. MoxTags eliminates that friction.
 4. Enable **Developer mode**
 5. Click **Load unpacked** and select the unzipped folder
 
+To build a Chrome zip for manual Chrome Web Store upload without using the
+Chrome Web Store API, run:
+
+```bash
+npm run package:chrome
+```
+
+This creates `moxtags-chrome-vX.Y.Z.zip` from `dist/chrome/`. Upload that zip
+manually in the Chrome Web Store developer dashboard. For a full GitHub release
+that skips the Chrome API upload, run `./release.sh --skip-chrome`.
+
+For the full release workflow with Firefox submitted to both AMO listed and
+unlisted signing channels, but Chrome packaged for manual Web Store upload, run:
+
+```bash
+npm run release:manual-chrome
+```
+
+Use `npm run release:manual-chrome:patch` for a patch version bump instead of
+the default minor version bump.
+
 ### Firefox
 
 Requires Firefox 128 or later.
@@ -101,4 +122,3 @@ the matching `otag:` or `art:` syntax.
 ## License
 
 MIT
-
