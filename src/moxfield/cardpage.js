@@ -62,3 +62,26 @@ export function findFormatLegalitiesHeading(container) {
   }
   return null;
 }
+
+/**
+ * Find the card's printed set/collector/pricing details row on a card page.
+ *
+ * @param {Element|Document} container - The DOM root to search within.
+ * @returns {Element|null} The printing detail row, or null.
+ */
+export function findCardPagePrintingDetails(container) {
+  const h1 = container.querySelector?.('h1');
+  const detailCol = h1?.closest?.('[class*="col-md"]') || h1?.parentElement?.parentElement || container;
+  const rows = detailCol.querySelectorAll?.('.d-flex') || [];
+  for (const row of rows) {
+    const text = row.textContent || '';
+    const hasCollectorNumber = /#\s*\S+/.test(text);
+    const hasSetCode = Boolean(
+      row.querySelector?.('.text-caps')
+      || row.querySelector?.('a[href*="/search/cards?q="]')
+      || row.querySelector?.('svg title')
+    );
+    if (hasCollectorNumber && hasSetCode) return row;
+  }
+  return null;
+}

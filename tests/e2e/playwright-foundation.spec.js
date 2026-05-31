@@ -144,17 +144,25 @@ function cardPageFixtureHtml() {
             <div class="col-md-8">
               <h1><strong>E2E Test Card</strong></h1>
               <div class="d-flex">
-                <a href="/search/cards?q=e:e2e">E2E</a>
-                <span># 1</span>
+                <div class="flex-grow-1">
+                  <a href="/search/cards?q=e:e2e">E2E</a>
+                  <div class="text-capitalize text-muted small"># 1, common</div>
+                </div>
+                <div class="text-nowrap text-end d-inline-block align-top flex-shink-0">
+                  <span>$0.28</span><span>&nbsp;/&nbsp;</span><span>$0.38</span>
+                </div>
+              </div>
+              <hr class="my-4">
+              <div class="small text-center">60-day Price History</div>
+              <div id="price-history-chart">Price chart placeholder</div>
+              <h3>Format Legalities</h3>
+              <div id="format-legalities-grid" class="row">
+                <div class="col"><span aria-label="Legal"></span></div>
+                <div class="col"><span aria-label="Legal"></span></div>
+                <div class="col"><span aria-label="Not Legal"></span></div>
+                <div class="col"><span aria-label="Banned"></span></div>
               </div>
             </div>
-          </div>
-          <h3>Format Legalities</h3>
-          <div class="row">
-            <div class="col"><span aria-label="Legal"></span></div>
-            <div class="col"><span aria-label="Legal"></span></div>
-            <div class="col"><span aria-label="Not Legal"></span></div>
-            <div class="col"><span aria-label="Banned"></span></div>
           </div>
         </main>
       </body>
@@ -825,7 +833,7 @@ test.describe('Playwright extension foundation', () => {
     }
   });
 
-  test('injects card-page tag sections before Format Legalities', async () => {
+  test('injects card-page tag sections after the printing details', async () => {
     const { context, close, networkGuard } = await launchGuardedContext();
     const page = await context.newPage();
 
@@ -834,7 +842,22 @@ test.describe('Playwright extension foundation', () => {
 
       const cardPageTags = page.locator('[data-moxtags-surface="moxfield-card-page"]');
       await expect(cardPageTags).toHaveCount(1, { timeout: 15_000 });
-      await expect(page.locator('main > [data-moxtags-surface="moxfield-card-page"] + hr + h3', { hasText: 'Format Legalities' })).toHaveCount(1);
+      await expect(page.locator('.d-flex:has-text("E2E"):has-text("# 1") + [data-moxtags-surface="moxfield-card-page"]')).toHaveCount(1);
+      await expect(page.locator('main [data-moxtags-surface="moxfield-card-page"] + hr + div', { hasText: '60-day Price History' })).toHaveCount(1);
+      await expect.poll(async () => page.evaluate(() => {
+        const tags = document.querySelector('[data-moxtags-surface="moxfield-card-page"]');
+        const printings = [...document.querySelectorAll('main .d-flex')]
+          .find(el => /E2E/.test(el.textContent || '') && /#\s*1/.test(el.textContent || ''));
+        const priceLabel = [...document.querySelectorAll('main .small.text-center')]
+          .find(el => /60\s*day\s*price\s*history/i.test((el.textContent || '').replace(/[-:]/g, ' ')));
+        return Boolean(
+          tags
+          && printings
+          && priceLabel
+          && (printings.compareDocumentPosition(tags) & 4)
+          && (tags.compareDocumentPosition(priceLabel) & 4)
+        );
+      })).toBe(true);
       await expect(cardPageTags.locator('[data-moxtags-section="card-tags"]')).toHaveCount(1);
       await expect(cardPageTags.locator('[data-moxtags-section="art-tags"]')).toHaveCount(1);
       await expect(cardPageTags.locator('[data-moxtags-trigger="card-tags"]')).toHaveCount(1);

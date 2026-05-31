@@ -4,7 +4,11 @@
 import { buildCardMap } from './moxfield/deck.js';
 import { parseCardIdFromHref } from './moxfield/card.js';
 import { findUnprocessedMoreOptionsButtons, findUnprocessedCardSearchRows, extractCardInfoFromRow } from './moxfield/longlayout.js';
-import { extractCardPageInfo, findFormatLegalitiesHeading } from './moxfield/cardpage.js';
+import {
+  extractCardPageInfo,
+  findCardPagePrintingDetails,
+  findFormatLegalitiesHeading,
+} from './moxfield/cardpage.js';
 import { extractCardOverlayInfo, findLegalityGrid } from './moxfield/overlay.js';
 import { MENU_KEYWORDS } from './moxfield/constants.js';
 import {
@@ -47,6 +51,7 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
   let observer = null;
   let lastUrl = location.href;
   let navWatcherId = null;
+  let cardPageRetryTimer = null;
 
   // Persistent cache: Moxfield card ID → { set, cn }.
   // Avoids repeated Moxfield API lookups for the same card across sessions.
@@ -135,6 +140,10 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
     currentCard = null;
     lastOptionsCard = null;
     searchTagsOnScryfall = false;
+    if (cardPageRetryTimer) {
+      clearTimeout(cardPageRetryTimer);
+      cardPageRetryTimer = null;
+    }
     pageType = null;
     deckId = null;
     deckUrl = null;
@@ -1525,35 +1534,36 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
 
   // ─── Standalone card page tag injection ─────────────────────────────
   // Card pages (/cards/{id}-slug) show a single card with set info,
-  // legalities, rulings, etc.  Inject tag sections above "Format
-  // Legalities", reusing the same overlay-style rendering.
+  // pricing, legalities, rulings, etc. Inject tag sections after the printed
+  // set/collector details, reusing the same overlay-style rendering.
 
   function scanForCardPageContent(el) {
     if (pageType !== 'cardPage') return;
-    // Check if the new node (or its subtree) contains the legalities heading.
     const container = document.querySelector('main') || document.body;
     if (container.querySelector('.moxtags-moxfield-overlay-tags')) return;
-    const heading = findFormatLegalitiesHeading(el) || findFormatLegalitiesHeading(container);
-    if (heading) {
+    const printingDetails = findCardPagePrintingDetails(el) || findCardPagePrintingDetails(container);
+    if (printingDetails) {
       injectTagsIntoCardPage();
     }
   }
 
-  async function injectTagsIntoCardPage() {
+  async function injectTagsIntoCardPage(options = {}) {
+    const attempt = options.attempt || 0;
     const container = document.querySelector('main') || document.body;
     if (container.querySelector('.moxtags-moxfield-overlay-tags')) return;
 
+    const printingDetails = findCardPagePrintingDetails(container);
     const heading = findFormatLegalitiesHeading(container);
     const legalityGrid = findLegalityGrid(container);
-    const insertBefore = heading || legalityGrid;
-    if (!insertBefore) {
-      log('Card page: legalities section not found, retrying…');
-      // SPA may still be rendering — retry once after a short delay.
-      const retryPageType = pageType;
-      setTimeout(() => {
-        if (pageType === retryPageType) injectTagsIntoCardPage();
-      }, 1000);
+    const fallbackBefore = attempt >= 6 ? heading || legalityGrid : null;
+    if (!printingDetails && !fallbackBefore) {
+      log('Card page: printing details not found, retrying…');
+      scheduleCardPageInjectionRetry(attempt + 1);
       return;
+    }
+    if (cardPageRetryTimer) {
+      clearTimeout(cardPageRetryTimer);
+      cardPageRetryTimer = null;
     }
 
     const identity = extractCardPageInfo(location.pathname, container);
@@ -1577,8 +1587,16 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
     const divider = document.createElement('hr');
     divider.className = 'my-4 moxtags-moxfield-overlay-divider';
 
-    // Insert before the heading (or legality grid), with a divider between.
-    insertBefore.before(wrapper, divider);
+    if (printingDetails) {
+      const followingSeparator = findNextElementSibling(printingDetails, el => el.matches('hr'));
+      if (followingSeparator) {
+        followingSeparator.before(wrapper);
+      } else {
+        printingDetails.after(wrapper, divider);
+      }
+    } else {
+      fallbackBefore.before(wrapper, divider);
+    }
 
     try {
       const tags = await loadTagsForOverlay(identity);
@@ -1589,6 +1607,24 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
       loader.textContent = err.cacheLoading ? 'Downloading tag data…' : 'Failed to load tags';
       loader.classList.add('moxtags-error');
     }
+
+    function findNextElementSibling(el, predicate) {
+      let sibling = el.nextElementSibling;
+      while (sibling) {
+        if (predicate(sibling)) return sibling;
+        sibling = sibling.nextElementSibling;
+      }
+      return null;
+    }
+  }
+
+  function scheduleCardPageInjectionRetry(attempt) {
+    if (cardPageRetryTimer) return;
+    const retryPageType = pageType;
+    cardPageRetryTimer = setTimeout(() => {
+      cardPageRetryTimer = null;
+      if (pageType === retryPageType) injectTagsIntoCardPage({ attempt });
+    }, 500);
   }
 
   // ─── Change Tags dialog injection ──────────────────────────────────

@@ -5,7 +5,11 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseHTML } from 'linkedom';
 
-import { extractCardPageInfo, findFormatLegalitiesHeading } from '../src/moxfield/cardpage.js';
+import {
+  extractCardPageInfo,
+  findCardPagePrintingDetails,
+  findFormatLegalitiesHeading,
+} from '../src/moxfield/cardpage.js';
 
 function buildCardPage() {
   return parseHTML(`
@@ -25,7 +29,13 @@ function buildCardPage() {
             <div class="flex-grow-1">Avatar: The Last Airbender<span class="small text-muted ms-1"><span>(</span><span class="text-caps">tla</span><span>)</span></span>
               <div class="text-capitalize text-muted small">#205,<span class="ms-1 text-capitalize">common</span></div>
             </div>
+            <div class="text-nowrap text-end d-inline-block align-top flex-shink-0">
+              <span>$0.28</span><span>&nbsp;/&nbsp;</span><span>$0.38</span>
+            </div>
           </div>
+          <hr class="my-4">
+          <div class="small text-center">60-day Price History</div>
+          <div>Price chart placeholder</div>
           <hr class="my-4">
           <h3 class="mb-3"><strong>Format Legalities</strong></h3>
           <div class="row row-sm-gutters">
@@ -102,6 +112,22 @@ describe('extractCardPageInfo', () => {
     const container = buildCardPage();
     const result = extractCardPageInfo('/decks/abc123', container);
     assert.equal(result.moxCardId, null);
+  });
+});
+
+describe('findCardPagePrintingDetails', () => {
+  it('finds the card printing detail row', () => {
+    const container = buildCardPage();
+    const details = findCardPagePrintingDetails(container);
+
+    assert.ok(details);
+    assert.match(details.textContent, /Avatar: The Last Airbender/);
+    assert.match(details.textContent, /#205/);
+  });
+
+  it('returns null when no card printing detail row exists', () => {
+    const container = parseHTML('<main><h3>Format Legalities</h3></main>').document.querySelector('main');
+    assert.equal(findCardPagePrintingDetails(container), null);
   });
 });
 
