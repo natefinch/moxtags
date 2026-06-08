@@ -5,6 +5,7 @@
 // no knowledge of what the caller does with the results.
 
 import { parseCardIdFromHref } from './card.js';
+import { extractCardInfoFromRow } from './longlayout.js';
 
 /**
  * Extract the deck ID from a Moxfield URL pathname.
@@ -232,6 +233,41 @@ export function extractCardInfoFromSearchResultCard(card, cardMap) {
 
   return {
     name: name || '',
+    set: null,
+    cn: null,
+    moxCardId,
+  };
+}
+
+/**
+ * Extract card identity from the search-result surface containing a pointer
+ * target. Search results must win over broader deck-page text matching because
+ * an ancestor can contain unrelated deck cards such as the commander.
+ *
+ * @param {Element} target - The pointer event target.
+ * @param {Map} cardMap - Map of lowercase card name -> deck card info.
+ * @returns {{name: string, set: string|null, cn: string|null, moxCardId: string|null}|null}
+ */
+export function extractCardInfoFromSearchResultTarget(target, cardMap) {
+  const card = target?.closest?.('.decklist-card');
+  if (card) return extractCardInfoFromSearchResultCard(card, cardMap);
+
+  const row = target?.closest?.('.row');
+  if (!row) return null;
+
+  const { moxCardId, cardName } = extractCardInfoFromRow(row);
+  if (!moxCardId && !cardName) return null;
+
+  const info = cardName ? cardMap.get(cardName.toLowerCase()) : null;
+  if (info) {
+    return {
+      ...info,
+      moxCardId: moxCardId || info.moxCardId || null,
+    };
+  }
+
+  return {
+    name: cardName || '',
     set: null,
     cn: null,
     moxCardId,

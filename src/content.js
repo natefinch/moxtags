@@ -20,6 +20,7 @@ import {
   hasDeckSearchControls as _hasDeckSearchControls,
   isPublicDeckActionMenu as _isPublicDeckActionMenu,
   extractCardInfoFromSearchResultCard as _extractCardInfoFromSearchResultCard,
+  extractCardInfoFromSearchResultTarget as _extractCardInfoFromSearchResultTarget,
 } from './moxfield/dom.js';
 import {
   readInterceptedDeck as _readInterceptedDeck,
@@ -266,6 +267,14 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
 
   // ─── Click tracking ────────────────────────────────────────────────
   function onMouseDown(e) {
+    const searchResultInfo = extractCardInfoFromSearchResultTarget(e.target);
+    if (searchResultInfo) {
+      currentCard = searchResultInfo;
+      lastOptionsCard = null;
+      log('Card context set (from search result) →', searchResultInfo.name || searchResultInfo.moxCardId);
+      return;
+    }
+
     const name = identifyCard(e.target);
     if (name) {
       const info = cardMap.get(name.toLowerCase());
@@ -278,20 +287,6 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
         log('Card context set →', info.name, `(${info.set}/${info.cn})`);
       } else {
         log('Card name found but not in cardMap:', name);
-      }
-    }
-
-    // On non-deck pages (no cardMap), try to identify the card from the
-    // nearest .decklist-card container so dropdown injection has context.
-    if (!currentCard && cardMap.size === 0) {
-      const card = e.target.closest?.('.decklist-card');
-      if (card) {
-        const info = extractCardInfoFromSearchResultCard(card);
-        if (info) {
-          currentCard = info;
-          lastOptionsCard = null;
-          log('Card context set (from decklist-card) →', info.name || info.moxCardId);
-        }
       }
     }
   }
@@ -456,6 +451,10 @@ import { loadMoxIdCache, createMoxIdPersister } from './cache/mox-ids.js';
 
   function extractCardInfoFromSearchResultCard(card) {
     return _extractCardInfoFromSearchResultCard(card, cardMap);
+  }
+
+  function extractCardInfoFromSearchResultTarget(target) {
+    return _extractCardInfoFromSearchResultTarget(target, cardMap);
   }
 
   // ─── Polling fallback ──────────────────────────────────────────────

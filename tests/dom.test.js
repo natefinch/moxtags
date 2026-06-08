@@ -9,6 +9,7 @@ import { parseHTML } from 'linkedom';
 import {
   extractCardIdFromCardPreviewPanel,
   extractCardInfoFromSearchResultCard,
+  extractCardInfoFromSearchResultTarget,
   findCardPreviewActionPanels,
   findSmallestMenu,
   hasDeckSearchControls,
@@ -137,6 +138,58 @@ describe('extractCardInfoFromSearchResultCard', () => {
       name: 'Shimmer Myr',
       set: 'mb2',
       cn: '123',
+      moxCardId: 'AWdze',
+    });
+  });
+});
+
+describe('extractCardInfoFromSearchResultTarget', () => {
+  it('prefers the clicked grid result over a commander elsewhere in the ancestor', () => {
+    const { document } = parseHTML(`
+      <main>
+        <div class="decklist-card">
+          <div class="decklist-card-phantomsearch">Dualcaster Mage</div>
+          <a href="/cards/Lmr6x-dualcaster-mage">
+            <img class="clicked-result" alt="Dualcaster Mage" src="card.webp">
+          </a>
+        </div>
+        <div>Commander Name</div>
+      </main>
+    `);
+    const cardMap = new Map([
+      ['commander name', { name: 'Commander Name', set: 'cmd', cn: '1' }],
+    ]);
+
+    const info = extractCardInfoFromSearchResultTarget(
+      document.querySelector('.clicked-result'),
+      cardMap,
+    );
+
+    assert.deepEqual(info, {
+      name: 'Dualcaster Mage',
+      set: null,
+      cn: null,
+      moxCardId: 'Lmr6x',
+    });
+  });
+
+  it('extracts the clicked long-layout search result', () => {
+    const { document } = parseHTML(`
+      <div class="row justify-content-center">
+        <div><a href="/cards/AWdze-shimmer-myr"><img class="img-card" alt="Shimmer Myr"></a></div>
+        <div><button class="clicked-result">More Options</button></div>
+      </div>
+    `);
+
+    const info = extractCardInfoFromSearchResultTarget(
+      document.querySelector('.clicked-result'),
+      new Map(),
+    );
+
+    assert.deepEqual(info, {
+      name: 'Shimmer Myr',
+      set: null,
+      cn: null,
       moxCardId: 'AWdze',
     });
   });
