@@ -78,8 +78,10 @@ test('Firefox WebDriver loads the extension and injects Scryfall card tags', {
 
     assert.deepEqual(fixture.apiRequests.sort(), [
       '/api.scryfall.com/cards/e2e/1',
-      '/api.scryfall.com/private/tags/illustration',
-      '/api.scryfall.com/private/tags/oracle',
+      '/api.scryfall.com/bulk-data/art_tags',
+      '/api.scryfall.com/bulk-data/oracle_tags',
+      '/api.scryfall.com/download/art_tags',
+      '/api.scryfall.com/download/oracle_tags',
     ].sort());
   } finally {
     if (driver) await driver.quit();
@@ -118,7 +120,7 @@ async function startFixtureServer() {
     }
     if (path.startsWith('/api.scryfall.com/')) {
       apiRequests.push(path);
-      serveScryfallApi(path, res);
+      serveScryfallApi(path, res, `http://${req.headers.host}`);
       return;
     }
     res.writeHead(404, { 'Content-Type': 'text/plain' });
@@ -153,7 +155,7 @@ function scryfallCardHtml() {
     </html>`;
 }
 
-function serveScryfallApi(path, res) {
+function serveScryfallApi(path, res, origin) {
   if (path === '/api.scryfall.com/cards/e2e/1') {
     sendJson(res, {
       oracle_id: ORACLE_ID,
@@ -161,16 +163,28 @@ function serveScryfallApi(path, res) {
     });
     return;
   }
-  if (path === '/api.scryfall.com/private/tags/oracle') {
+  if (path === '/api.scryfall.com/bulk-data/oracle_tags') {
     sendJson(res, {
-      data: [{ label: 'firefox-card-tag', oracle_ids: [ORACLE_ID] }],
+      download_uri: `${origin}/api.scryfall.com/download/oracle_tags`,
     });
     return;
   }
-  if (path === '/api.scryfall.com/private/tags/illustration') {
+  if (path === '/api.scryfall.com/bulk-data/art_tags') {
     sendJson(res, {
-      data: [{ label: 'firefox-art-tag', illustration_ids: [ILLUSTRATION_ID] }],
+      download_uri: `${origin}/api.scryfall.com/download/art_tags`,
     });
+    return;
+  }
+  if (path === '/api.scryfall.com/download/oracle_tags') {
+    sendJson(res, [
+      { label: 'firefox-card-tag', slug: 'firefox-card-tag', taggings: [{ oracle_id: ORACLE_ID }] },
+    ]);
+    return;
+  }
+  if (path === '/api.scryfall.com/download/art_tags') {
+    sendJson(res, [
+      { label: 'firefox-art-tag', slug: 'firefox-art-tag', taggings: [{ illustration_id: ILLUSTRATION_ID }] },
+    ]);
     return;
   }
   res.writeHead(404, { 'Content-Type': 'text/plain' });

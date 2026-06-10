@@ -17,8 +17,8 @@ All API functions use **dependency injection** for `fetch` and request options, 
 
 ### constants.js
 
-- **`ORACLE_TAGS_URL`** — Scryfall oracle (card) tags endpoint.
-- **`ILLUSTRATION_TAGS_URL`** — Scryfall illustration (art) tags endpoint.
+- **`ORACLE_TAGS_URL`** — Scryfall oracle-tag bulk-data metadata endpoint.
+- **`ILLUSTRATION_TAGS_URL`** — Scryfall art-tag bulk-data metadata endpoint.
 - **`SCRYFALL_CARD_API`** — Base Scryfall cards API URL.
 
 ### tags.js
@@ -26,11 +26,11 @@ All API functions use **dependency injection** for `fetch` and request options, 
 - **`buildReverseIndex(tags, idKey)`** → `Map<string, string[]>`
   Builds a reverse index mapping card IDs to their tag names.
 
-- **`extractTagNames(data)`** → `string[]`
-  Extracts sorted unique tag labels from a Scryfall tag dataset.
+- **`extractTagSlugs(data)`** → `string[]`
+  Extracts sorted unique search slugs from a Scryfall tag dataset.
 
-- **`buildCompactIndex(reverseIndex)`** → `{ t: string[], d: Record<string, number[]> }`
-  Compresses a reverse index into a compact indexed form for efficient storage.
+- **`buildCompactIndex(reverseIndex)`** → `{ t: string[], n?: Record<number, string>, d: Record<string, number[]> }`
+  Compresses a reverse index into slugs, differing display names, and ID arrays.
 
 - **`expandCompactIndex(...compacts)`** → `Map`
   Expands one or more compact indexes back into a merged lookup map.
@@ -43,7 +43,7 @@ All API functions use **dependency injection** for `fetch` and request options, 
 All API functions accept a `fetchFn` parameter (typically `globalThis.fetch`) and an `options` object for URL/header overrides.
 
 - **`fetchTagIndexes(fetchFn, options?)`** → `Promise<{ oracleIndex, illustrationIndex, oracleTagNames, artTagNames }>`
-  Fetches both Scryfall tag datasets and builds reverse indexes. Options: `{ oracleUrl, illustrationUrl, headers }`.
+  Resolves both Scryfall bulk-data download URLs, fetches the tag datasets, and builds reverse indexes. Options: `{ oracleUrl, illustrationUrl, headers }`.
 
 - **`fetchCard(set, cn, fetchFn, options?)`** → `Promise<{ oracleId, illustrationId }>`
   Fetches a single card by set code and collector number. Options: `{ apiUrl, headers }`.

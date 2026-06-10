@@ -13,7 +13,8 @@
   ],
   "host_permissions": [
     "https://api2.moxfield.com/*",
-    "https://api.scryfall.com/*"
+    "https://api.scryfall.com/*",
+    "https://data.scryfall.io/*"
   ],
   "icons": {
     "16": "icons/moxtags-gem-16.png",

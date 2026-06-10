@@ -4,13 +4,14 @@
 //
 // Run before releases: node scripts/fetch-tags.js
 
-import { writeFileSync, mkdirSync } from 'fs';
+import { readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
-import { buildReverseIndex, buildCompactIndex, splitCompactIndex } from '../src/scryfall/tags.js';
-import { ORACLE_TAGS_URL, ILLUSTRATION_TAGS_URL } from '../src/scryfall/constants.js';
+import { buildCompactIndex, splitCompactIndex } from '../src/scryfall/tags.js';
+import { fetchTagIndexes } from '../src/scryfall/api.js';
 
 const ROOT = join(import.meta.dirname, '..');
 const DATA_DIR = join(ROOT, 'src', 'data');
+const { version } = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
 
 function writeJsData(path, globalName, data) {
   const json = JSON.stringify(data);
@@ -21,22 +22,18 @@ function writeJsData(path, globalName, data) {
 async function main() {
   mkdirSync(DATA_DIR, { recursive: true });
 
-  console.log('Fetching oracle tags…');
-  const oracleResp = await fetch(ORACLE_TAGS_URL, { credentials: 'omit' });
-  if (!oracleResp.ok) throw new Error(`Oracle fetch failed: HTTP ${oracleResp.status}`);
-  const oracleData = await oracleResp.json();
+  console.log('Fetching oracle and illustration tags…');
+  const {
+    oracleIndex,
+    illustrationIndex: illusIndex,
+    oracleTagNames,
+    artTagNames,
+  } = await fetchTagIndexes(fetch, {
+    headers: { 'User-Agent': `MoxTags/${version}` },
+  });
 
-  console.log('Fetching illustration tags…');
-  const illusResp = await fetch(ILLUSTRATION_TAGS_URL, { credentials: 'omit' });
-  if (!illusResp.ok) throw new Error(`Illustration fetch failed: HTTP ${illusResp.status}`);
-  const illusData = await illusResp.json();
-
-  // Build reverse indexes using the same logic as background.js.
-  const oracleIndex = buildReverseIndex(oracleData.data, 'oracle_ids');
-  const illusIndex = buildReverseIndex(illusData.data, 'illustration_ids');
-
-  console.log(`Oracle: ${oracleData.data.length} tags, ${oracleIndex.size} unique IDs`);
-  console.log(`Illustration: ${illusData.data.length} tags, ${illusIndex.size} unique IDs`);
+  console.log(`Oracle: ${oracleTagNames.length} tags, ${oracleIndex.size} unique IDs`);
+  console.log(`Illustration: ${artTagNames.length} tags, ${illusIndex.size} unique IDs`);
 
   // Convert to compact indexed format.
   const oracleCompact = buildCompactIndex(oracleIndex);

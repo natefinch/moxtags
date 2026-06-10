@@ -99,15 +99,25 @@ async function loadBackground({ fetchImpl, storageSeed = {}, bundledData = true 
         illustration_id: ILLUSTRATION_ID,
       }), { status: 200 });
     }
-    if (textUrl.includes('/private/tags/oracle')) {
+    if (textUrl.includes('/bulk-data/oracle_tags')) {
       return new Response(JSON.stringify({
-        data: [{ label: 'card-tag', oracle_ids: [ORACLE_ID] }],
+        download_uri: 'https://data.scryfall.io/oracle-tags/test.json',
       }), { status: 200 });
     }
-    if (textUrl.includes('/private/tags/illustration')) {
+    if (textUrl.includes('/bulk-data/art_tags')) {
       return new Response(JSON.stringify({
-        data: [{ label: 'art-tag', illustration_ids: [ILLUSTRATION_ID] }],
+        download_uri: 'https://data.scryfall.io/art-tags/test.json',
       }), { status: 200 });
+    }
+    if (textUrl.includes('/oracle-tags/test.json')) {
+      return new Response(JSON.stringify([
+        { label: 'card-tag', slug: 'card-tag', taggings: [{ oracle_id: ORACLE_ID }] },
+      ]), { status: 200 });
+    }
+    if (textUrl.includes('/art-tags/test.json')) {
+      return new Response(JSON.stringify([
+        { label: 'art-tag', slug: 'art-tag', taggings: [{ illustration_id: ILLUSTRATION_ID }] },
+      ]), { status: 200 });
     }
     if (textUrl.startsWith('chrome-extension://')) {
       return new Response('{}', { status: 404 });
@@ -358,11 +368,13 @@ describe('background message handling', () => {
       bundledData: false,
       fetchImpl: async (url) => {
         const textUrl = String(url);
-        if (textUrl.includes('/private/tags/oracle')) {
+        if (textUrl.includes('/bulk-data/oracle_tags')) {
           return new Response('no oracle tags', { status: 503 });
         }
-        if (textUrl.includes('/private/tags/illustration')) {
-          return new Response(JSON.stringify({ data: [] }), { status: 200 });
+        if (textUrl.includes('/bulk-data/art_tags')) {
+          return new Response(JSON.stringify({
+            download_uri: 'https://data.scryfall.io/art-tags/test.json',
+          }), { status: 200 });
         }
         return new Response('{}', { status: 404 });
       },

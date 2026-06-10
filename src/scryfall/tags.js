@@ -2,16 +2,16 @@
 
 /**
  * Build a Map from id → [{name, slug}] from the tag data array.
- * Each tag has a `label` (used as both name and slug) and an array
- * of IDs under `idKey`.
+ * Each tag has a display `label`, search `slug`, and `taggings` array
+ * whose entries contain an ID under `idKey`.
  */
 export function buildReverseIndex(tags, idKey) {
   const index = new Map();
   for (const tag of tags) {
-    const entry = { name: tag.label, slug: tag.label };
-    const ids = tag[idKey];
-    if (!ids) continue;
-    for (const id of ids) {
+    const entry = { name: tag.label, slug: tag.slug };
+    for (const tagging of tag.taggings || []) {
+      const id = tagging[idKey];
+      if (!id) continue;
       let list = index.get(id);
       if (!list) {
         list = [];
@@ -24,32 +24,39 @@ export function buildReverseIndex(tags, idKey) {
 }
 
 /**
- * Extract a sorted, deduplicated array of tag label strings from raw
+ * Extract a sorted, deduplicated array of tag slug strings from raw
  * Scryfall tag data.
  */
-export function extractTagNames(data) {
-  return [...new Set(data.map(t => t.label))].sort();
+export function extractTagSlugs(data) {
+  return [...new Set(data.map(t => t.slug))].sort();
 }
 
 /**
  * Build a compact indexed representation of a reverse index.
- * Output format: { t: string[], d: Record<string, number[]> }
- * where `t` is a sorted array of unique tag labels, and `d` maps
- * each ID to an array of indices into `t`.
+ * Output format: { t: string[], n?: Record<number, string>, d: Record<string, number[]> }
+ * where `t` contains sorted slugs, optional `n` maps indices to differing
+ * display names, and `d` maps each ID to indices into `t`.
  */
 export function buildCompactIndex(reverseIndex) {
-  const allLabels = new Set();
+  const tagsBySlug = new Map();
   for (const tags of reverseIndex.values()) {
-    for (const tag of tags) allLabels.add(tag.name);
+    for (const tag of tags) tagsBySlug.set(tag.slug, tag.name);
   }
-  const labels = [...allLabels].sort();
-  const labelToIdx = new Map(labels.map((l, i) => [l, i]));
+  const slugs = [...tagsBySlug.keys()].sort();
+  const slugToIdx = new Map(slugs.map((slug, i) => [slug, i]));
 
   const d = {};
   for (const [id, tags] of reverseIndex) {
-    d[id] = tags.map(tag => labelToIdx.get(tag.name));
+    d[id] = tags.map(tag => slugToIdx.get(tag.slug));
   }
-  return { t: labels, d };
+  const compact = { t: slugs, d };
+  const names = {};
+  for (let i = 0; i < slugs.length; i++) {
+    const name = tagsBySlug.get(slugs[i]);
+    if (name !== slugs[i]) names[i] = name;
+  }
+  if (Object.keys(names).length > 0) compact.n = names;
+  return compact;
 }
 
 /**
@@ -60,9 +67,9 @@ export function buildCompactIndex(reverseIndex) {
  */
 export function expandCompactIndex(...compacts) {
   const index = new Map();
-  for (const { t, d } of compacts) {
+  for (const { t, n, d } of compacts) {
     for (const [id, indices] of Object.entries(d)) {
-      const entries = indices.map(i => ({ name: t[i], slug: t[i] }));
+      const entries = indices.map(i => ({ name: n?.[i] || t[i], slug: t[i] }));
       const existing = index.get(id);
       if (existing) {
         existing.push(...entries);
@@ -86,7 +93,7 @@ export function splitCompactIndex(compact, n) {
     const chunk = keys.slice(i * chunkSize, (i + 1) * chunkSize);
     const d = {};
     for (const k of chunk) d[k] = compact.d[k];
-    parts.push({ t: compact.t, d });
+    parts.push({ t: compact.t, ...(compact.n ? { n: compact.n } : {}), d });
   }
   return parts;
 }
