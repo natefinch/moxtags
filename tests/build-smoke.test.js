@@ -101,6 +101,14 @@ describe('built extension artifacts', () => {
     assertFileExists(distPath('firefox', 'background.js'));
   });
 
+  it('allows fetching Scryfall API metadata and bulk-data downloads', () => {
+    for (const browser of ['chrome', 'firefox']) {
+      const manifest = readJson(distPath(browser, 'manifest.json'));
+      assert.ok(manifest.host_permissions.includes('https://api.scryfall.com/*'));
+      assert.ok(manifest.host_permissions.includes('https://data.scryfall.io/*'));
+    }
+  });
+
   it('injects page_hook.js in the MAIN world at document_start on Moxfield', () => {
     for (const browser of ['chrome', 'firefox']) {
       const manifest = readJson(distPath(browser, 'manifest.json'));

@@ -4,10 +4,10 @@
 // and return raw data. They don't touch chrome.storage or global state.
 
 import { SCRYFALL_CARD_API, ORACLE_TAGS_URL, ILLUSTRATION_TAGS_URL } from './constants.js';
-import { buildReverseIndex, extractTagNames } from './tags.js';
+import { buildReverseIndex, extractTagSlugs } from './tags.js';
 
 /**
- * Fetch both tag index files from Scryfall and build reverse indexes.
+ * Fetch both tag bulk-data files from Scryfall and build reverse indexes.
  *
  * @param {Function} fetchFn - A fetch-compatible function.
  * @param {Object} [options]
@@ -22,16 +22,34 @@ import { buildReverseIndex, extractTagNames } from './tags.js';
 export async function fetchTagIndexes(fetchFn, options = {}) {
   const oracleUrl = options.oracleUrl || ORACLE_TAGS_URL;
   const illustrationUrl = options.illustrationUrl || ILLUSTRATION_TAGS_URL;
-  const headers = options.headers || {};
+  const headers = { Accept: 'application/json', ...(options.headers || {}) };
 
-  const [oracleResp, illustrationResp] = await Promise.all([
+  const [oracleMetadataResp, illustrationMetadataResp] = await Promise.all([
     fetchFn(oracleUrl, { headers, credentials: 'omit' }),
     fetchFn(illustrationUrl, { headers, credentials: 'omit' }),
   ]);
 
+  if (!oracleMetadataResp.ok || !illustrationMetadataResp.ok) {
+    throw new Error(
+      `Tag metadata fetch failed: oracle=${oracleMetadataResp.status}, illustration=${illustrationMetadataResp.status}`
+    );
+  }
+
+  const [oracleMetadata, illustrationMetadata] = await Promise.all([
+    oracleMetadataResp.json(),
+    illustrationMetadataResp.json(),
+  ]);
+  if (!oracleMetadata.download_uri || !illustrationMetadata.download_uri) {
+    throw new Error('Tag metadata response is missing a download_uri');
+  }
+
+  const [oracleResp, illustrationResp] = await Promise.all([
+    fetchFn(oracleMetadata.download_uri, { headers, credentials: 'omit' }),
+    fetchFn(illustrationMetadata.download_uri, { headers, credentials: 'omit' }),
+  ]);
   if (!oracleResp.ok || !illustrationResp.ok) {
     throw new Error(
-      `Tag fetch failed: oracle=${oracleResp.status}, illustration=${illustrationResp.status}`
+      `Tag data fetch failed: oracle=${oracleResp.status}, illustration=${illustrationResp.status}`
     );
   }
 
@@ -40,10 +58,10 @@ export async function fetchTagIndexes(fetchFn, options = {}) {
     illustrationResp.json(),
   ]);
 
-  const oracleIndex = buildReverseIndex(oracleData.data, 'oracle_ids');
-  const illustrationIndex = buildReverseIndex(illustrationData.data, 'illustration_ids');
-  const oracleTagNames = extractTagNames(oracleData.data);
-  const artTagNames = extractTagNames(illustrationData.data);
+  const oracleIndex = buildReverseIndex(oracleData, 'oracle_id');
+  const illustrationIndex = buildReverseIndex(illustrationData, 'illustration_id');
+  const oracleTagNames = extractTagSlugs(oracleData);
+  const artTagNames = extractTagSlugs(illustrationData);
 
   return { oracleIndex, illustrationIndex, oracleTagNames, artTagNames };
 }

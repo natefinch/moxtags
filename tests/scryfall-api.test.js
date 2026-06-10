@@ -40,57 +40,79 @@ function createMockFetch(routes = {}) {
 // ---------------------------------------------------------------------------
 
 describe('fetchTagIndexes', () => {
-  const oracleData = {
-    data: [
-      { label: 'Creature Removal', slug: 'creature-removal', oracle_ids: ['id-1', 'id-2'] },
-      { label: 'Card Draw', slug: 'card-draw', oracle_ids: ['id-3'] },
-    ],
-  };
-  const illustrationData = {
-    data: [
-      { label: 'Mountains', slug: 'mountains', illustration_ids: ['ill-1'] },
-    ],
-  };
+  const oracleMetadata = { download_uri: 'https://data.example.com/oracle-tags.json' };
+  const illustrationMetadata = { download_uri: 'https://data.example.com/art-tags.json' };
+  const oracleData = [
+    {
+      label: 'Creature Removal',
+      slug: 'creature-removal',
+      taggings: [{ oracle_id: 'id-1' }, { oracle_id: 'id-2' }],
+    },
+    { label: 'Card Draw', slug: 'card-draw', taggings: [{ oracle_id: 'id-3' }] },
+  ];
+  const illustrationData = [
+    { label: 'Mountain', slug: 'mountain', taggings: [{ illustration_id: 'ill-1' }] },
+  ];
 
-  it('fetches and builds reverse indexes from both tag endpoints', async () => {
+  it('fetches metadata and builds reverse indexes from both bulk-data files', async () => {
     const fetchFn = createMockFetch({
-      'oracle': mockResponse(oracleData),
-      'illustration': mockResponse(illustrationData),
+      'bulk-data/oracle_tags': mockResponse(oracleMetadata),
+      'bulk-data/art_tags': mockResponse(illustrationMetadata),
+      'oracle-tags.json': mockResponse(oracleData),
+      'art-tags.json': mockResponse(illustrationData),
     });
 
     const result = await fetchTagIndexes(fetchFn);
 
     assert.ok(result.oracleIndex instanceof Map);
     assert.ok(result.illustrationIndex instanceof Map);
-    assert.ok(result.oracleIndex.has('id-1'));
-    assert.ok(result.illustrationIndex.has('ill-1'));
-    assert.ok(Array.isArray(result.oracleTagNames));
-    assert.ok(Array.isArray(result.artTagNames));
-    assert.ok(result.oracleTagNames.includes('Card Draw'));
-    assert.ok(result.artTagNames.includes('Mountains'));
+    assert.deepEqual(result.oracleIndex.get('id-1'), [{
+      name: 'Creature Removal',
+      slug: 'creature-removal',
+    }]);
+    assert.deepEqual(result.illustrationIndex.get('ill-1'), [{
+      name: 'Mountain',
+      slug: 'mountain',
+    }]);
+    assert.deepEqual(result.oracleTagNames, ['card-draw', 'creature-removal']);
+    assert.deepEqual(result.artTagNames, ['mountain']);
   });
 
-  it('throws on HTTP error from oracle endpoint', async () => {
+  it('throws on HTTP error from oracle metadata endpoint', async () => {
     const fetchFn = createMockFetch({
-      'oracle': mockResponse({}, { status: 500, ok: false }),
-      'illustration': mockResponse(illustrationData),
+      'bulk-data/oracle_tags': mockResponse({}, { status: 500, ok: false }),
+      'bulk-data/art_tags': mockResponse(illustrationMetadata),
     });
 
     await assert.rejects(
       () => fetchTagIndexes(fetchFn),
-      /Tag fetch failed/,
+      /Tag metadata fetch failed/,
     );
   });
 
-  it('throws on HTTP error from illustration endpoint', async () => {
+  it('throws when metadata omits a download URI', async () => {
     const fetchFn = createMockFetch({
-      'oracle': mockResponse(oracleData),
-      'illustration': mockResponse({}, { status: 503, ok: false }),
+      'bulk-data/oracle_tags': mockResponse({}),
+      'bulk-data/art_tags': mockResponse(illustrationMetadata),
     });
 
     await assert.rejects(
       () => fetchTagIndexes(fetchFn),
-      /Tag fetch failed/,
+      /missing a download_uri/,
+    );
+  });
+
+  it('throws on HTTP error from a tag data file', async () => {
+    const fetchFn = createMockFetch({
+      'bulk-data/oracle_tags': mockResponse(oracleMetadata),
+      'bulk-data/art_tags': mockResponse(illustrationMetadata),
+      'oracle-tags.json': mockResponse({}, { status: 503, ok: false }),
+      'art-tags.json': mockResponse(illustrationData),
+    });
+
+    await assert.rejects(
+      () => fetchTagIndexes(fetchFn),
+      /Tag data fetch failed/,
     );
   });
 
@@ -98,7 +120,13 @@ describe('fetchTagIndexes', () => {
     const urls = [];
     const fetchFn = async (url) => {
       urls.push(url);
-      return mockResponse({ data: [] });
+      if (url.endsWith('/oracle')) {
+        return mockResponse({ download_uri: 'https://downloads.example.com/oracle.json' });
+      }
+      if (url.endsWith('/illustration')) {
+        return mockResponse({ download_uri: 'https://downloads.example.com/illustration.json' });
+      }
+      return mockResponse([]);
     };
 
     await fetchTagIndexes(fetchFn, {
@@ -108,19 +136,30 @@ describe('fetchTagIndexes', () => {
 
     assert.ok(urls.includes('https://custom.example.com/oracle'));
     assert.ok(urls.includes('https://custom.example.com/illustration'));
+    assert.ok(urls.includes('https://downloads.example.com/oracle.json'));
+    assert.ok(urls.includes('https://downloads.example.com/illustration.json'));
   });
 
-  it('passes headers and credentials: "omit" to fetch', async () => {
-    let capturedInit;
+  it('passes headers and credentials: "omit" to every fetch', async () => {
+    const capturedInits = [];
     const fetchFn = async (url, init) => {
-      capturedInit = init;
-      return mockResponse({ data: [] });
+      capturedInits.push(init);
+      if (url.includes('oracle_tags')) {
+        return mockResponse({ download_uri: 'https://downloads.example.com/oracle.json' });
+      }
+      if (url.includes('art_tags')) {
+        return mockResponse({ download_uri: 'https://downloads.example.com/art.json' });
+      }
+      return mockResponse([]);
     };
 
     await fetchTagIndexes(fetchFn, { headers: { 'X-Test': 'yes' } });
 
-    assert.equal(capturedInit.credentials, 'omit');
-    assert.equal(capturedInit.headers['X-Test'], 'yes');
+    assert.equal(capturedInits.length, 4);
+    for (const init of capturedInits) {
+      assert.equal(init.credentials, 'omit');
+      assert.equal(init.headers['X-Test'], 'yes');
+    }
   });
 });
 

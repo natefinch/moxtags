@@ -131,7 +131,8 @@ Card identity on Scryfall full search pages comes from `a.print-langs-item.curre
 
 - **Art tags**: prefix `art:` — Scryfall illustration tags (specific to a card's artwork)
 - **Card tags**: prefix `otag:` — Scryfall oracle tags (shared across printings)
-- Tag indexes: `api.scryfall.com/private/tags/oracle` and `.../illustration`
+- Tag indexes: `api.scryfall.com/bulk-data/oracle_tags` and `.../art_tags`;
+  each metadata response provides a `data.scryfall.io` download URL.
 
 ## Styling Guidelines
 

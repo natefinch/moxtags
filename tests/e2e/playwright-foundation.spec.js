@@ -421,26 +421,38 @@ async function installDeterministicRoutes(context, counters) {
     });
   });
 
-  await context.route('https://api.scryfall.com/private/tags/oracle', route => route.fulfill({
+  await context.route('https://api.scryfall.com/bulk-data/oracle_tags', route => route.fulfill({
     status: 200,
     contentType: 'application/json',
     body: JSON.stringify({
-      data: [
-        { label: 'card-tag', oracle_ids: [TEST_ORACLE_ID] },
-        { label: 'second-card-tag', oracle_ids: [TEST_ORACLE_ID_2] },
-      ],
+      download_uri: 'https://data.scryfall.io/oracle-tags/e2e.json',
     }),
   }));
 
-  await context.route('https://api.scryfall.com/private/tags/illustration', route => route.fulfill({
+  await context.route('https://api.scryfall.com/bulk-data/art_tags', route => route.fulfill({
     status: 200,
     contentType: 'application/json',
     body: JSON.stringify({
-      data: [
-        { label: 'art-tag', illustration_ids: [TEST_ILLUSTRATION_ID] },
-        { label: 'second-art-tag', illustration_ids: [TEST_ILLUSTRATION_ID_2] },
-      ],
+      download_uri: 'https://data.scryfall.io/art-tags/e2e.json',
     }),
+  }));
+
+  await context.route('https://data.scryfall.io/oracle-tags/e2e.json', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify([
+      { label: 'card-tag', slug: 'card-tag', taggings: [{ oracle_id: TEST_ORACLE_ID }] },
+      { label: 'second-card-tag', slug: 'second-card-tag', taggings: [{ oracle_id: TEST_ORACLE_ID_2 }] },
+    ]),
+  }));
+
+  await context.route('https://data.scryfall.io/art-tags/e2e.json', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify([
+      { label: 'art-tag', slug: 'art-tag', taggings: [{ illustration_id: TEST_ILLUSTRATION_ID }] },
+      { label: 'second-art-tag', slug: 'second-art-tag', taggings: [{ illustration_id: TEST_ILLUSTRATION_ID_2 }] },
+    ]),
   }));
 }
 

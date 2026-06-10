@@ -452,7 +452,7 @@ function loadBundledData() {
     oracleIndex = expandCompactIndex(self.__MOXTAGS_ORACLE);
     illustrationIndex = expandCompactIndex(self.__MOXTAGS_ILLUS_1, self.__MOXTAGS_ILLUS_2);
     oracleTagNames = self.__MOXTAGS_ORACLE.t;
-    // Both halves share the same tag labels array.
+    // Both halves share the same tag slug array.
     artTagNames = self.__MOXTAGS_ILLUS_1.t;
 
     // Release the raw tag data to free memory.
